@@ -14,7 +14,7 @@ import (
 
 	"github.com/ezequielcamezzana/magpie"
 	"github.com/ezequielcamezzana/magpie/httpapi"
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
 	"github.com/go-chi/chi/v5"

@@ -15,7 +15,7 @@ import (
 	"time"
 
 	magpie "github.com/ezequielcamezzana/magpie"
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
 const (

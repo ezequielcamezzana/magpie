@@ -3,7 +3,7 @@ package ecosystems
 import (
 	"testing"
 
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
 func TestRegistryName(t *testing.T) {

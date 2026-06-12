@@ -8,7 +8,7 @@ import (
 
 	magpie "github.com/ezequielcamezzana/magpie"
 	"github.com/ezequielcamezzana/magpie/pkg/match"
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
 func acceptOne(t *testing.T, cve *magpie.NVDCVE, names, vendors, osvRanges []string, wantSw, eco string) []magpie.ResolvedCPE {

@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/ezequielcamezzana/magpie"
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
 // handleComponent sirve el bundle de un paquete (datos + repo + vulns) SIN versión:

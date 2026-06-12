@@ -1,6 +1,6 @@
 package ecosystems
 
-import "github.com/ezequielcamezzana/magpie/pkg/purl"
+import "github.com/ezequielcamezzana/magpie/internal/server/purl"
 
 // registryName resolves the ecosyste.ms registry name for an Identity. Language
 // types map by PURL type; distro registries are release-scoped (ubuntu-24.04,

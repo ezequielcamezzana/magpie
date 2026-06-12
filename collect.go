@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/ezequielcamezzana/magpie/pkg/match"
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
 // ErrSourceNotApplicable lo devuelve un fetcher cuando no tiene un path de datos

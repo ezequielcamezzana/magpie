@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
 // fixtureServer responds with a testdata fixture chosen by the queried package name.

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
 // registerCPERStage instala un stage 3 fake para la duración del test. La

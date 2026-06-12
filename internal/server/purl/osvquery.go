@@ -17,13 +17,13 @@ func (id Identity) ReleaseToken() string {
 	return releaseToken(id.Distro, id.Release)
 }
 
-// StoreKey is the per-source store key for these OSV records. Centraliza el key
-// para que collect y el client no driftéen.
+// StoreKey is the per-source store key for these OSV records. Centralizes the
+// key so collect and the client don't drift apart.
 func (q OSVQuery) StoreKey() string {
 	switch q.Kind {
 	case KindLanguage, KindLinux:
-		// Para Linux el Ecosystem ya viene sufijado con el release
-		// ("Ubuntu:24.04"), así que la key queda release-scoped sola.
+		// For Linux the Ecosystem already comes suffixed with the release
+		// ("Ubuntu:24.04"), so the key is release-scoped on its own.
 		return strings.ToLower(q.Ecosystem + ":" + q.Name)
 	case KindGitHub:
 		return strings.ToLower(q.RepoURL)

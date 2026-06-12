@@ -19,7 +19,7 @@ import (
 
 	magpie "github.com/ezequielcamezzana/magpie"
 	"github.com/ezequielcamezzana/magpie/pkg/match"
-	"github.com/ezequielcamezzana/magpie/pkg/purl"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 	"github.com/ezequielcamezzana/magpie/source/nvd"
 )
 
