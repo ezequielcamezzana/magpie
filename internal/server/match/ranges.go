@@ -61,8 +61,8 @@ func boundsEquivalent(va string, incA bool, vb string, incB bool) bool {
 	if va == vb && incA == incB {
 		return true
 	}
-	// Cota sin límite: "[*" ≡ "(*" (y "*]" ≡ "*)"). La inclusividad de ±infinito
-	// no cambia el conjunto — no hay versión por debajo/encima de "*".
+	// Unbounded edge: "[*" ≡ "(*" (and "*]" ≡ "*)"). Inclusivity of ±infinity
+	// doesn't change the set — there is no version below/above "*".
 	if va == "*" && vb == "*" {
 		return true
 	}

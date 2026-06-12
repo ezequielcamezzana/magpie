@@ -1,24 +1,27 @@
 package match
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 func TestDpkgCompare(t *testing.T) {
 	cases := []struct {
 		a, b string
 		want int
 	}{
-		{"1:2.3-4", "2.3-4", 1},   // epoch wins
-		{"2.3-4", "2.3-5", -1},    // debian revision order
-		{"2.3", "2.3-1", -1},      // missing revision == "0" < "1"
-		{"1.0~rc1", "1.0", -1},    // tilde sorts before everything
-		{"1.0", "1.0", 0},         // equal
-		{"2.3-5", "2.3-4", 1},     // revision order (reverse)
-		{"1.0.2k", "1.0.2j", 1},   // letter suffix ordering
+		{"1:2.3-4", "2.3-4", 1}, // epoch wins
+		{"2.3-4", "2.3-5", -1},  // debian revision order
+		{"2.3", "2.3-1", -1},    // missing revision == "0" < "1"
+		{"1.0~rc1", "1.0", -1},  // tilde sorts before everything
+		{"1.0", "1.0", 0},       // equal
+		{"2.3-5", "2.3-4", 1},   // revision order (reverse)
+		{"1.0.2k", "1.0.2j", 1}, // letter suffix ordering
 	}
 	for _, c := range cases {
-		if got := dpkgCompare(c.a, c.b); got != c.want {
-			t.Errorf("dpkgCompare(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
-		}
+		assert.Equal(t, c.want, dpkgCompare(c.a, c.b), "dpkgCompare(%q, %q)", c.a, c.b)
 	}
 }
 
@@ -64,12 +67,8 @@ func TestDpkgMatch_RangeMembership(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := m.Match(c.version, Evidence{AffectedRanges: c.ranges})
-			if got.Matched != c.wantMatched {
-				t.Errorf("Matched = %v, want %v (%+v)", got.Matched, c.wantMatched, got)
-			}
-			if got.Reason != c.wantReason {
-				t.Errorf("Reason = %q, want %q", got.Reason, c.wantReason)
-			}
+			assert.Equal(t, c.wantMatched, got.Matched)
+			assert.Equal(t, c.wantReason, got.Reason)
 		})
 	}
 }
@@ -77,9 +76,8 @@ func TestDpkgMatch_RangeMembership(t *testing.T) {
 func TestDpkgMatch_ListEquality(t *testing.T) {
 	m := dpkgMatcher{}
 	got := m.Match("2.3-4", Evidence{AffectedVersions: []string{"2.3-4"}})
-	if !got.Matched || got.Reason != ReasonInAffectedList {
-		t.Fatalf("expected dpkg list equality, got %+v", got)
-	}
+	require.True(t, got.Matched, "expected dpkg list equality, got %+v", got)
+	require.Equal(t, ReasonInAffectedList, got.Reason)
 }
 
 func TestDpkgMatch_NextFix(t *testing.T) {
@@ -89,10 +87,6 @@ func TestDpkgMatch_NextFix(t *testing.T) {
 		FixedVersions:  []string{"2.0", "1.5-1"},
 	}
 	got := m.Match("1.2", ev)
-	if !got.Matched {
-		t.Fatalf("expected match, got %+v", got)
-	}
-	if got.NextFix != "1.5-1" {
-		t.Errorf("NextFix = %q, want %q", got.NextFix, "1.5-1")
-	}
+	require.True(t, got.Matched, "expected match, got %+v", got)
+	assert.Equal(t, "1.5-1", got.NextFix)
 }

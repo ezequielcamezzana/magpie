@@ -21,8 +21,8 @@ func (goMatcher) Match(version string, ev Evidence) Result {
 
 	version = StripBuildMeta(version)
 
-	// WHY: igual que semverMatcher, ante una versión que ni x/mod ni
-	// Masterminds parsean devolvemos unsupported en vez de assume-affected.
+	// WHY: same as semverMatcher, for a version that neither x/mod nor
+	// Masterminds can parse we return unsupported instead of assume-affected.
 	if !goValid(version) {
 		return Result{Matched: false, Reason: ReasonUnsupportedVersionScheme}
 	}

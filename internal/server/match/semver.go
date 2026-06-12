@@ -10,31 +10,31 @@ type semverMatcher struct{}
 
 // Match evaluates version against the evidence in the order defined by DD §6.
 func (semverMatcher) Match(version string, ev Evidence) Result {
-	// 1. SPURL sin versión matchea todo.
+	// 1. SPURL without version matches everything.
 	if version == "" {
 		return Result{Matched: true, Reason: ReasonNoVersionSpecified}
 	}
 
 	version = StripBuildMeta(version)
 
-	// 2. Versión no parseable: nunca assume-affected.
-	// WHY: ante una versión inválida devolvemos unsupported en vez de tratarla
-	// como afectada — un falso positivo silencioso es peor que un "no sé".
+	// 2. Unparseable version: never assume-affected.
+	// WHY: for an invalid version we return unsupported instead of treating it
+	// as affected — a silent false positive is worse than an "I don't know".
 	if _, err := msemver.NewVersion(version); err != nil {
 		return Result{Matched: false, Reason: ReasonUnsupportedVersionScheme}
 	}
 
-	// 3. UnaffectedVersions: clear definitivo, return inmediato.
+	// 3. UnaffectedVersions: definitive clear, immediate return.
 	if semverInList(version, ev.UnaffectedVersions) {
 		return Result{Matched: false, Reason: ReasonInUnaffectedList}
 	}
 
-	// 4. FixedVersions: clear definitivo, return inmediato.
+	// 4. FixedVersions: definitive clear, immediate return.
 	if semverInList(version, ev.FixedVersions) {
 		return Result{Matched: false, Reason: ReasonInFixedList}
 	}
 
-	// 5. AffectedVersions: finding positivo, return inmediato.
+	// 5. AffectedVersions: positive finding, immediate return.
 	if semverInList(version, ev.AffectedVersions) {
 		return Result{
 			Matched: true,
@@ -43,9 +43,9 @@ func (semverMatcher) Match(version string, ev Evidence) Result {
 		}
 	}
 
-	// 6. AffectedRanges: si la versión no estaba en la lista, todavía puede
-	// caer en un rango. Un bound inválido hace que ESE intervalo no matchee,
-	// nunca assume-affected.
+	// 6. AffectedRanges: if the version wasn't in the list, it can still fall
+	// within a range. An invalid bound makes THAT interval not match, never
+	// assume-affected.
 	for _, raw := range ev.AffectedRanges {
 		iv, ok := ParseInterval(raw)
 		if !ok {
@@ -64,7 +64,7 @@ func (semverMatcher) Match(version string, ev Evidence) Result {
 		}
 	}
 
-	// 7. No matcheó nada.
+	// 7. Nothing matched.
 	switch {
 	case len(ev.AffectedRanges) > 0:
 		return Result{Matched: false, Reason: ReasonNotInAffectedRange}
@@ -76,9 +76,9 @@ func (semverMatcher) Match(version string, ev Evidence) Result {
 }
 
 // semverInList reports whether version equals any list entry by semver value.
-// WHY: comparamos versiones parseadas, no strings crudos, para que "1.0.0" ==
-// "1.0.0+build". Si un elemento de la lista no parsea, caemos a string-equal
-// como fallback en vez de crashear o ignorarlo.
+// WHY: we compare parsed versions, not raw strings, so that "1.0.0" ==
+// "1.0.0+build". If a list entry doesn't parse, we fall back to string
+// equality instead of crashing or skipping it.
 func semverInList(version string, list []string) bool {
 	ver, err := msemver.NewVersion(version)
 	if err != nil {

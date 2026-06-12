@@ -1,6 +1,10 @@
 package match
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestFor_Selector(t *testing.T) {
 	cases := []struct {
@@ -8,7 +12,7 @@ func TestFor_Selector(t *testing.T) {
 		ecosystem string
 		want      string // type name we expect
 	}{
-		{"nvd", "go", "match.semverMatcher"},     // nvd always semver
+		{"nvd", "go", "match.semverMatcher"}, // nvd always semver
 		{"nvd", "Debian:12", "match.semverMatcher"},
 		{"osv", "Go", "match.goMatcher"},
 		{"osv", "golang", "match.goMatcher"},
@@ -23,9 +27,7 @@ func TestFor_Selector(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := matcherTypeName(For(c.source, c.ecosystem))
-		if got != c.want {
-			t.Errorf("For(%q, %q) = %s, want %s", c.source, c.ecosystem, got, c.want)
-		}
+		assert.Equal(t, c.want, got, "For(%q, %q)", c.source, c.ecosystem)
 	}
 }
 

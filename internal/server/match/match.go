@@ -5,17 +5,17 @@ package match
 import "strings"
 
 type Evidence struct {
-	AffectedVersions   []string // versiones exactas
-	AffectedRanges     []string // intervalos "[lo, hi)"
+	AffectedVersions   []string // exact versions
+	AffectedRanges     []string // intervals "[lo, hi)"
 	FixedVersions      []string
 	UnaffectedVersions []string
 }
 
 type Result struct {
 	Matched  bool
-	Reason   string   // uno de los reason codes de abajo
-	Range    string   // el intervalo que matcheó (cuando aplica)
-	NextFix  string   // menor fixed version > la pedida (cuando matched y hay fixed)
+	Reason   string // one of the reason codes below
+	Range    string // the interval that matched (when applicable)
+	NextFix  string // smallest fixed version > the queried one (when matched and fixed exists)
 	Warnings []string
 }
 
@@ -23,10 +23,11 @@ type Matcher interface {
 	Match(version string, ev Evidence) Result
 }
 
-// NOTE: estos reason codes duplican los string values de magpie.ReasonX en
-// result.go a propósito. pkg/match no puede importar el root package magpie
-// porque collect.go (root) importa pkg/match — importarlo de vuelta crearía un
-// ciclo. El mapeo match.Result -> magpie.MatchVerdict lo hace collect.
+// NOTE: these reason codes deliberately duplicate the string values of
+// magpie.ReasonX in result.go. This package cannot import the root package
+// magpie because collect.go (root) imports this package — importing it back
+// would create a cycle. The match.Result -> magpie.MatchVerdict mapping is
+// done by collect.
 const (
 	ReasonNoVersionSpecified       = "no_version_specified"
 	ReasonUnsupportedVersionScheme = "unsupported_version_scheme"
@@ -43,7 +44,7 @@ const (
 // semver (DD §6). Go ecosystems use goMatcher; Debian/Ubuntu/RPM Linux
 // distros use dpkgMatcher; everything else falls back to semver.
 //
-// WHY the ecosystem strings vary: pkg/purl emits both raw purl types ("go",
+// WHY the ecosystem strings vary: the purl package emits both raw purl types ("go",
 // "deb", "rpm") and Linux distro ecosystems ("Debian:12", "Ubuntu:24.04",
 // "Red Hat:9"). We match the raw types and the dpkg/rpm distro prefixes.
 func For(source, ecosystem string) Matcher {
@@ -57,8 +58,9 @@ func For(source, ecosystem string) Matcher {
 	case isDpkgEcosystem(ecosystem):
 		return dpkgMatcher{}
 	default:
-		// TODO: Alpine (apk) usa el mismo algoritmo dpkg en Holmes; por ahora
-		// cae a semver hasta confirmar el mapeo de ecosystem que produce purl.
+		// TODO: Alpine (apk) uses the same dpkg algorithm in Holmes; for now
+		// it falls back to semver until the ecosystem mapping produced by
+		// purl is confirmed.
 		return semverMatcher{}
 	}
 }

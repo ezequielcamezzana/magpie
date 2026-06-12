@@ -1,6 +1,11 @@
 package match
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 func TestSemverMatch_ReasonCodes(t *testing.T) {
 	tests := []struct {
@@ -79,12 +84,8 @@ func TestSemverMatch_ReasonCodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := m.Match(tt.version, tt.ev)
-			if got.Matched != tt.wantMatched {
-				t.Errorf("Matched = %v, want %v", got.Matched, tt.wantMatched)
-			}
-			if got.Reason != tt.wantReason {
-				t.Errorf("Reason = %q, want %q", got.Reason, tt.wantReason)
-			}
+			assert.Equal(t, tt.wantMatched, got.Matched)
+			assert.Equal(t, tt.wantReason, got.Reason)
 		})
 	}
 }
@@ -92,16 +93,13 @@ func TestSemverMatch_ReasonCodes(t *testing.T) {
 func TestSemverMatch_RangeSet(t *testing.T) {
 	m := semverMatcher{}
 	got := m.Match("1.2.0", Evidence{AffectedRanges: []string{"[1.0.0, 1.2.6)"}})
-	if !got.Matched || got.Reason != ReasonInAffectedRange {
-		t.Fatalf("got %+v", got)
-	}
-	if got.Range != "[1.0.0, 1.2.6)" {
-		t.Errorf("Range = %q, want %q", got.Range, "[1.0.0, 1.2.6)")
-	}
+	require.True(t, got.Matched)
+	require.Equal(t, ReasonInAffectedRange, got.Reason)
+	assert.Equal(t, "[1.0.0, 1.2.6)", got.Range)
 }
 
-// Una versión ausente de la lista puede todavía matchear por rango: el paso 5
-// (lista) y el 6 (rango) se evalúan ambos.
+// A version absent from the list can still match by range: step 5 (list) and
+// step 6 (range) are both evaluated.
 func TestSemverMatch_ListMissButRangeHit(t *testing.T) {
 	m := semverMatcher{}
 	ev := Evidence{
@@ -109,9 +107,8 @@ func TestSemverMatch_ListMissButRangeHit(t *testing.T) {
 		AffectedRanges:   []string{"[1.0.0, 2.0.0)"},
 	}
 	got := m.Match("1.5.0", ev)
-	if !got.Matched || got.Reason != ReasonInAffectedRange {
-		t.Fatalf("expected match via range, got %+v", got)
-	}
+	require.True(t, got.Matched, "expected match via range, got %+v", got)
+	require.Equal(t, ReasonInAffectedRange, got.Reason)
 }
 
 func TestSemverMatch_NextFix(t *testing.T) {
@@ -121,54 +118,37 @@ func TestSemverMatch_NextFix(t *testing.T) {
 		FixedVersions:  []string{"1.2.6", "2.0.0"},
 	}
 	got := m.Match("1.1.0", ev)
-	if !got.Matched {
-		t.Fatalf("expected match, got %+v", got)
-	}
-	if got.NextFix != "1.2.6" {
-		t.Errorf("NextFix = %q, want %q", got.NextFix, "1.2.6")
-	}
+	require.True(t, got.Matched, "expected match, got %+v", got)
+	assert.Equal(t, "1.2.6", got.NextFix)
 }
 
-// Igualdad de lista es semver-parseada, no string crudo: "1.0.0+build" == "1.0.0".
+// List equality is semver-parsed, not raw string: "1.0.0+build" == "1.0.0".
 func TestSemverMatch_BuildMetaEquality(t *testing.T) {
 	m := semverMatcher{}
 	got := m.Match("1.0.0+build", Evidence{AffectedVersions: []string{"1.0.0"}})
-	if !got.Matched || got.Reason != ReasonInAffectedList {
-		t.Fatalf("expected build-meta-stripped equality, got %+v", got)
-	}
+	require.True(t, got.Matched, "expected build-meta-stripped equality, got %+v", got)
+	require.Equal(t, ReasonInAffectedList, got.Reason)
 }
 
 func TestSemverMatch_InvalidBoundNoPanicNoMatch(t *testing.T) {
 	m := semverMatcher{}
 	got := m.Match("1.5.0", Evidence{AffectedRanges: []string{"[not-a-version, 2.0.0)"}})
-	if got.Matched {
-		t.Fatalf("invalid bound must not match, got %+v", got)
-	}
-	if got.Reason != ReasonNotInAffectedRange {
-		t.Errorf("Reason = %q, want %q", got.Reason, ReasonNotInAffectedRange)
-	}
+	require.False(t, got.Matched, "invalid bound must not match, got %+v", got)
+	assert.Equal(t, ReasonNotInAffectedRange, got.Reason)
 }
 
 func TestParseInterval(t *testing.T) {
 	iv, ok := ParseInterval("[1.0.0, 1.2.6)")
-	if !ok {
-		t.Fatal("ParseInterval failed")
-	}
-	if !iv.LowerInc || iv.Lower != "1.0.0" {
-		t.Errorf("lower = %+v, want inclusive 1.0.0", iv)
-	}
-	if iv.UpperInc || iv.Upper != "1.2.6" {
-		t.Errorf("upper = %+v, want exclusive 1.2.6", iv)
-	}
+	require.True(t, ok, "ParseInterval failed")
+	assert.True(t, iv.LowerInc)
+	assert.Equal(t, "1.0.0", iv.Lower)
+	assert.False(t, iv.UpperInc)
+	assert.Equal(t, "1.2.6", iv.Upper)
 
 	iv2, ok := ParseInterval("(*, 0.2.4)")
-	if !ok {
-		t.Fatal("ParseInterval (*, 0.2.4) failed")
-	}
-	if iv2.LowerInc || iv2.Lower != "*" {
-		t.Errorf("lower = %+v, want exclusive unbounded *", iv2)
-	}
-	if iv2.UpperInc || iv2.Upper != "0.2.4" {
-		t.Errorf("upper = %+v, want exclusive 0.2.4", iv2)
-	}
+	require.True(t, ok, "ParseInterval (*, 0.2.4) failed")
+	assert.False(t, iv2.LowerInc)
+	assert.Equal(t, "*", iv2.Lower)
+	assert.False(t, iv2.UpperInc)
+	assert.Equal(t, "0.2.4", iv2.Upper)
 }

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ezequielcamezzana/magpie/pkg/match"
+	"github.com/ezequielcamezzana/magpie/internal/server/match"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
