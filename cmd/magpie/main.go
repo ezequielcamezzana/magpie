@@ -17,8 +17,8 @@ import (
 	// WHY: registran los fetchers de cada source y el stage CPER (init); sin
 	// estos blank-imports Collect devuelve "not registered" / saltea CPER.
 	_ "github.com/ezequielcamezzana/magpie/cper"
-	_ "github.com/ezequielcamezzana/magpie/source/ecosystems"
-	_ "github.com/ezequielcamezzana/magpie/source/osv"
+	_ "github.com/ezequielcamezzana/magpie/internal/server/source/ecosystems"
+	_ "github.com/ezequielcamezzana/magpie/internal/server/source/osv"
 
 	"github.com/go-chi/chi/v5"
 )

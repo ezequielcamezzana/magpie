@@ -13,7 +13,7 @@ import (
 
 	"github.com/ezequielcamezzana/magpie/httpapi"
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
-	"github.com/ezequielcamezzana/magpie/source/ecosystems"
+	"github.com/ezequielcamezzana/magpie/internal/server/source/ecosystems"
 	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
 	"github.com/go-chi/chi/v5"
@@ -24,13 +24,13 @@ import (
 // el path final contra el fixture correspondiente.
 //
 // WHY: leemos los fixtures existentes con path relativo cruzado
-// (../source/ecosystems/testdata) en vez de duplicarlos en httpapi/testdata;
+// (../internal/server/source/ecosystems/testdata) en vez de duplicarlos en httpapi/testdata;
 // el path resuelve porque go test corre con cwd en el dir del package.
 func fakeUpstream(t *testing.T, calls *int64) *httptest.Server {
 	t.Helper()
 	byPath := map[string]string{
-		"/npmjs.org/packages/chalk":    "../source/ecosystems/testdata/chalk.json",
-		"/npmjs.org/packages/minimist": "../source/ecosystems/testdata/minimist.json",
+		"/npmjs.org/packages/chalk":    "../internal/server/source/ecosystems/testdata/chalk.json",
+		"/npmjs.org/packages/minimist": "../internal/server/source/ecosystems/testdata/minimist.json",
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(calls, 1)

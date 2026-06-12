@@ -6,13 +6,13 @@ import "encoding/json"
 // fields we map are declared; the rest of the (large) response is ignored.
 
 type rawPackage struct {
-	Name                     string           `json:"name"`
-	Description              string           `json:"description"`
-	NormalizedLicenses       []string         `json:"normalized_licenses"`
-	LatestReleaseNumber      string           `json:"latest_release_number"`
-	LatestReleasePublishedAt string           `json:"latest_release_published_at"`
-	RepositoryURL            string           `json:"repository_url"`
-	IconURL                  string           `json:"icon_url"`
+	Name                     string            `json:"name"`
+	Description              string            `json:"description"`
+	NormalizedLicenses       []string          `json:"normalized_licenses"`
+	LatestReleaseNumber      string            `json:"latest_release_number"`
+	LatestReleasePublishedAt string            `json:"latest_release_published_at"`
+	RepositoryURL            string            `json:"repository_url"`
+	IconURL                  string            `json:"icon_url"`
 	RepoMetadata             *rawRepoMetadata  `json:"repo_metadata"`
 	Advisories               []json.RawMessage `json:"advisories"`
 }

@@ -98,7 +98,7 @@ func parseMatch(m rawMatch) matchData {
 	if len(parts) < 5 {
 		return matchData{}
 	}
-	// Solo CPEs de aplicación (cpe:2.3:a:…); ignorar OS/hardware (o/h).
+	// Application CPEs only (cpe:2.3:a:…); ignore OS/hardware (o/h).
 	if len(parts) > 2 && parts[2] != "a" {
 		return matchData{}
 	}

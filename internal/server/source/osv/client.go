@@ -38,8 +38,8 @@ func New(httpc *http.Client, logger *slog.Logger) *Client {
 	return &Client{httpc: httpc, logger: logger, BaseURL: defaultBaseURL}
 }
 
-// WHY: collect.Collect no puede importar este package (ciclo), así que registra
-// su constructor como el fetcher real de stage 2.
+// WHY: collect.Collect cannot import this package (cycle), so we register
+// the constructor as the real stage-2 fetcher.
 func init() {
 	collect.RegisterOSVFetcher(func(httpc *http.Client, logger *slog.Logger) collect.OSVFetcher {
 		return New(httpc, logger)

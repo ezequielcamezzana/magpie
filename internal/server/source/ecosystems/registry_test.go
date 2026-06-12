@@ -3,6 +3,8 @@ package ecosystems
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
@@ -66,9 +68,7 @@ func TestRegistryName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := registryName(tt.id); got != tt.want {
-				t.Errorf("registryName(%+v) = %q, want %q", tt.id, got, tt.want)
-			}
+			assert.Equal(t, tt.want, registryName(tt.id))
 		})
 	}
 }

@@ -20,7 +20,7 @@ import (
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/match"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
-	"github.com/ezequielcamezzana/magpie/source/nvd"
+	"github.com/ezequielcamezzana/magpie/internal/server/source/nvd"
 )
 
 // NVDFetcher trae una CVE de NVD por id; *nvd.Client la satisface. Es

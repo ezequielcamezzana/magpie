@@ -32,7 +32,7 @@ func New(httpc *http.Client, logger *slog.Logger, apiKey string) *Client {
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}
-	// WHY: NVD rate-limits ~50 req/30s con API key, ~5 sin key.
+	// WHY: NVD rate-limits ~50 req/30s with an API key, ~5 without.
 	delay := 6 * time.Second
 	if apiKey != "" {
 		delay = 700 * time.Millisecond
@@ -40,7 +40,7 @@ func New(httpc *http.Client, logger *slog.Logger, apiKey string) *Client {
 	return &Client{httpc: httpc, logger: logger, apiKey: apiKey, delay: delay}
 }
 
-// FetchCVE trae una CVE de NVD y la parsea a *collect.NVDCVE (metadata + matches).
+// FetchCVE fetches a CVE from NVD and parses it into *collect.NVDCVE (metadata + matches).
 func (c *Client) FetchCVE(ctx context.Context, cveID string) (*collect.NVDCVE, error) {
 	q := url.Values{}
 	q.Set("cveId", cveID)

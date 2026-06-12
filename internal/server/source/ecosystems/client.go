@@ -65,8 +65,8 @@ func New(httpc *http.Client, logger *slog.Logger) *Client {
 	return &Client{httpc: httpc, logger: logger, BaseURL: defaultBaseURL}
 }
 
-// WHY: collect.Collect no puede importar este package (ciclo), así que registra
-// su constructor como el fetcher real de stage 1.
+// WHY: collect.Collect cannot import this package (cycle), so we register
+// the constructor as the real stage-1 fetcher.
 func init() {
 	collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
 		return New(httpc, logger)
@@ -83,9 +83,9 @@ func (c *Client) Fetch(ctx context.Context, spurl string) (collect.Component, *c
 
 	registry := registryName(id)
 	if registry == "" {
-		// ecosyste.ms no sirve este type/release (rpm, fedora, distro sin
-		// registry scopeado…): no es un fallo, el pipeline lo saltea y la data
-		// de distro llega por OSV.
+		// ecosyste.ms does not serve this type/release (rpm, fedora, distros
+		// without a release-scoped registry…): not a failure, the pipeline
+		// skips it and distro data arrives via OSV.
 		return collect.Component{}, nil, nil, fmt.Errorf("%w: %s", collect.ErrSourceNotApplicable, id.Type)
 	}
 
