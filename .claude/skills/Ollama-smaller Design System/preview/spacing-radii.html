@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../source/base.css">
+<style>
+  body{padding:22px 26px;background:#fff;}
+  .row{display:flex;gap:22px;align-items:flex-end;}
+  .item{display:flex;flex-direction:column;gap:9px;align-items:center;}
+  .box{width:120px;height:64px;border:1.5px solid var(--color-ink);background:var(--color-surface-soft);}
+  .lab{font-family:var(--font-mono);font-size:11px;color:var(--color-charcoal);text-align:center;}
+  .pillbox{width:120px;height:36px;border-radius:9999px;}
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="item"><div class="pillbox" style="border:1.5px solid var(--color-ink);background:var(--color-surface-soft)"></div><div class="lab">full · 9999<br>interactive</div></div>
+    <div class="item"><div class="box" style="border-radius:12px"></div><div class="lab">lg · 12<br>cards</div></div>
+    <div class="item"><div class="box" style="border-radius:6px;width:64px;height:40px"></div><div class="lab">sm · 6<br>tooltip</div></div>
+  </div>
+</body>
+</html>

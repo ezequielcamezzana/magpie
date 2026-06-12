@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../source/base.css">
+<style>
+  body{padding:22px 26px;background:#fff;}
+  .row{display:flex;align-items:center;gap:24px;}
+  .row + .row{margin-top:20px;}
+  .lab{font-family:var(--font-mono);font-size:10px;color:var(--color-mute);width:54px;}
+</style>
+</head>
+<body>
+  <div class="row"><span class="lab">tabs</span>
+    <div class="tabs">
+      <button class="tab active">Advisories</button>
+      <button class="tab">Packages</button>
+      <button class="tab">Sources</button>
+    </div>
+  </div>
+  <div class="row"><span class="lab">pager</span>
+    <div class="pager">
+      <span>128 results</span>
+      <button class="page-btn" disabled>‹</button>
+      <span>1 / 13</span>
+      <button class="page-btn">›</button>
+    </div>
+  </div>
+</body>
+</html>

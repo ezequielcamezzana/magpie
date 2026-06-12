@@ -1,0 +1,36 @@
+{
+    "vulns": [
+        {
+            "id": "DEBIAN-CVE-2024-2398",
+            "summary": "HTTP/2 push headers memory-leak",
+            "aliases": [
+                "CVE-2024-2398"
+            ],
+            "modified": "2024-04-01T00:00:00Z",
+            "published": "2024-03-27T00:00:00Z",
+            "affected": [
+                {
+                    "package": {
+                        "name": "curl",
+                        "ecosystem": "Debian:12",
+                        "purl": "pkg:deb/debian/curl"
+                    },
+                    "ranges": [
+                        {
+                            "type": "ECOSYSTEM",
+                            "events": [
+                                {
+                                    "introduced": "0"
+                                },
+                                {
+                                    "fixed": "7.88.1-10+deb12u6"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "schema_version": "1.7.3"
+        }
+    ]
+}

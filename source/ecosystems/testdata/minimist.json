@@ -1,0 +1,849 @@
+{
+    "id": 2016807,
+    "name": "minimist",
+    "ecosystem": "npm",
+    "description": "parse argument options",
+    "homepage": "https://github.com/minimistjs/minimist",
+    "licenses": "MIT",
+    "normalized_licenses": [
+        "MIT"
+    ],
+    "repository_url": "https://github.com/minimistjs/minimist",
+    "keywords_array": [
+        "argv",
+        "getopt",
+        "parser",
+        "optimist"
+    ],
+    "namespace": null,
+    "versions_count": 31,
+    "first_release_published_at": "2013-06-25T08:17:18.123Z",
+    "latest_release_published_at": "2023-02-09T20:59:49.233Z",
+    "latest_release_number": "1.2.8",
+    "last_synced_at": "2026-06-01T06:13:52.135Z",
+    "created_at": "2022-04-09T19:39:35.172Z",
+    "updated_at": "2026-06-01T12:42:50.287Z",
+    "registry_url": "https://www.npmjs.com/package/minimist",
+    "install_command": "npm install minimist",
+    "documentation_url": null,
+    "metadata": {
+        "funding": {
+            "url": "https://github.com/sponsors/ljharb"
+        },
+        "dist-tags": {
+            "latest": "1.2.8",
+            "0.2-backport": "0.2.4"
+        }
+    },
+    "repo_metadata": {
+        "id": 61271581,
+        "uuid": "549230701",
+        "full_name": "minimistjs/minimist",
+        "owner": "minimistjs",
+        "description": "parse argument options",
+        "archived": false,
+        "fork": false,
+        "pushed_at": "2025-12-30T01:57:54.000Z",
+        "size": 168,
+        "stargazers_count": 664,
+        "open_issues_count": 14,
+        "forks_count": 46,
+        "subscribers_count": 5,
+        "default_branch": "main",
+        "last_synced_at": "2026-05-17T12:36:21.560Z",
+        "etag": null,
+        "topics": [],
+        "latest_commit_sha": null,
+        "homepage": "",
+        "language": "JavaScript",
+        "has_issues": true,
+        "has_wiki": null,
+        "has_pages": null,
+        "mirror_url": null,
+        "source_name": null,
+        "license": "mit",
+        "status": null,
+        "scm": "git",
+        "pull_requests_enabled": true,
+        "icon_url": "https://github.com/minimistjs.png",
+        "metadata": {
+            "files": {
+                "readme": "README.md",
+                "changelog": "CHANGELOG.md",
+                "contributing": null,
+                "funding": ".github/FUNDING.yml",
+                "license": "LICENSE",
+                "code_of_conduct": null,
+                "threat_model": null,
+                "audit": null,
+                "citation": null,
+                "codeowners": null,
+                "security": null,
+                "support": null,
+                "governance": null,
+                "roadmap": null,
+                "authors": null,
+                "dei": null,
+                "publiccode": null,
+                "codemeta": null,
+                "zenodo": null,
+                "notice": null,
+                "maintainers": null,
+                "copyright": null,
+                "agents": null,
+                "dco": null,
+                "cla": null
+            },
+            "funding": {
+                "github": [
+                    "ljharb"
+                ],
+                "patreon": null,
+                "open_collective": null,
+                "ko_fi": null,
+                "tidelift": "npm/minimist",
+                "community_bridge": null,
+                "liberapay": null,
+                "issuehunt": null,
+                "otechie": null,
+                "custom": null
+            }
+        },
+        "created_at": "2022-10-10T22:01:04.000Z",
+        "updated_at": "2026-05-08T19:27:34.000Z",
+        "dependencies_parsed_at": "2026-02-01T21:02:41.440Z",
+        "dependency_job_id": null,
+        "html_url": "https://github.com/minimistjs/minimist",
+        "commit_stats": {
+            "total_commits": 160,
+            "total_committers": 22,
+            "mean_commits": "7.2727272727272725",
+            "dds": 0.6875,
+            "last_synced_commit": "bedaa8b9ab5a901fa342aad4494cbbf676b11a21"
+        },
+        "previous_names": [],
+        "tags_count": 31,
+        "template": false,
+        "template_full_name": null,
+        "purl": "pkg:github/minimistjs/minimist",
+        "repository_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/repositories/minimistjs%2Fminimist",
+        "tags_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/repositories/minimistjs%2Fminimist/tags",
+        "releases_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/repositories/minimistjs%2Fminimist/releases",
+        "manifests_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/repositories/minimistjs%2Fminimist/manifests",
+        "owner_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/owners/minimistjs",
+        "download_url": "https://codeload.github.com/minimistjs/minimist/tar.gz/refs/heads/main",
+        "sbom_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/repositories/minimistjs%2Fminimist/sbom",
+        "scorecard": {
+            "id": 648394,
+            "data": {
+                "date": "2025-08-11",
+                "repo": {
+                    "name": "github.com/minimistjs/minimist",
+                    "commit": "30b56212c17fdad7575c652a6aef5e61afa026e4"
+                },
+                "scorecard": {
+                    "version": "v5.2.1-40-gf6ed084d",
+                    "commit": "f6ed084d17c9236477efd66e5b258b9d4cc7b389"
+                },
+                "score": 6,
+                "checks": [
+                    {
+                        "name": "Code-Review",
+                        "score": 4,
+                        "reason": "Found 10/25 approved changesets -- score normalized to 4",
+                        "details": null,
+                        "documentation": {
+                            "short": "Determines if the project requires human code review before pull requests (aka merge requests) are merged.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#code-review"
+                        }
+                    },
+                    {
+                        "name": "Maintained",
+                        "score": 1,
+                        "reason": "0 commit(s) and 2 issue activity found in the last 90 days -- score normalized to 1",
+                        "details": null,
+                        "documentation": {
+                            "short": "Determines if the project is \"actively maintained\".",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#maintained"
+                        }
+                    },
+                    {
+                        "name": "Dangerous-Workflow",
+                        "score": 10,
+                        "reason": "no dangerous workflow patterns detected",
+                        "details": null,
+                        "documentation": {
+                            "short": "Determines if the project's GitHub Action workflows avoid dangerous patterns.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#dangerous-workflow"
+                        }
+                    },
+                    {
+                        "name": "Packaging",
+                        "score": -1,
+                        "reason": "packaging workflow not detected",
+                        "details": [
+                            "Warn: no GitHub/GitLab publishing workflow detected."
+                        ],
+                        "documentation": {
+                            "short": "Determines if the project is published as a package that others can easily download, install, easily update, and uninstall.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#packaging"
+                        }
+                    },
+                    {
+                        "name": "Pinned-Dependencies",
+                        "score": 0,
+                        "reason": "dependency not pinned by hash detected -- score normalized to 0",
+                        "details": [
+                            "Warn: third-party GitHubAction not pinned by hash: .github/workflows/node-aught.yml:10: update your workflow using https://app.stepsecurity.io/secureworkflow/minimistjs/minimist/node-aught.yml/main?enable=pin",
+                            "Warn: third-party GitHubAction not pinned by hash: .github/workflows/node-pretest.yml:10: update your workflow using https://app.stepsecurity.io/secureworkflow/minimistjs/minimist/node-pretest.yml/main?enable=pin",
+                            "Warn: third-party GitHubAction not pinned by hash: .github/workflows/node-tens.yml:10: update your workflow using https://app.stepsecurity.io/secureworkflow/minimistjs/minimist/node-tens.yml/main?enable=pin",
+                            "Warn: GitHub-owned GitHubAction not pinned by hash: .github/workflows/rebase.yml:19: update your workflow using https://app.stepsecurity.io/secureworkflow/minimistjs/minimist/rebase.yml/main?enable=pin",
+                            "Warn: third-party GitHubAction not pinned by hash: .github/workflows/rebase.yml:20: update your workflow using https://app.stepsecurity.io/secureworkflow/minimistjs/minimist/rebase.yml/main?enable=pin",
+                            "Warn: third-party GitHubAction not pinned by hash: .github/workflows/require-allow-edits.yml:18: update your workflow using https://app.stepsecurity.io/secureworkflow/minimistjs/minimist/require-allow-edits.yml/main?enable=pin",
+                            "Info:   0 out of   1 GitHub-owned GitHubAction dependencies pinned",
+                            "Info:   0 out of   5 third-party GitHubAction dependencies pinned"
+                        ],
+                        "documentation": {
+                            "short": "Determines if the project has declared and pinned the dependencies of its build process.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#pinned-dependencies"
+                        }
+                    },
+                    {
+                        "name": "Binary-Artifacts",
+                        "score": 10,
+                        "reason": "no binaries found in the repo",
+                        "details": null,
+                        "documentation": {
+                            "short": "Determines if the project has generated executable (binary) artifacts in the source repository.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#binary-artifacts"
+                        }
+                    },
+                    {
+                        "name": "Token-Permissions",
+                        "score": 10,
+                        "reason": "GitHub workflow tokens follow principle of least privilege",
+                        "details": [
+                            "Info: jobLevel 'pull-requests' permission set to 'read': .github/workflows/rebase.yml:12",
+                            "Warn: jobLevel 'contents' permission set to 'write': .github/workflows/rebase.yml:11",
+                            "Info: jobLevel 'pull-requests' permission set to 'read': .github/workflows/require-allow-edits.yml:11",
+                            "Info: topLevel 'contents' permission set to 'read': .github/workflows/node-aught.yml:6",
+                            "Info: topLevel 'contents' permission set to 'read': .github/workflows/node-pretest.yml:6",
+                            "Info: topLevel 'contents' permission set to 'read': .github/workflows/node-tens.yml:6",
+                            "Info: topLevel 'contents' permission set to 'read': .github/workflows/rebase.yml:6",
+                            "Info: topLevel 'contents' permission set to 'read': .github/workflows/require-allow-edits.yml:6"
+                        ],
+                        "documentation": {
+                            "short": "Determines if the project's workflows follow the principle of least privilege.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#token-permissions"
+                        }
+                    },
+                    {
+                        "name": "CII-Best-Practices",
+                        "score": 0,
+                        "reason": "no effort to earn an OpenSSF best practices badge detected",
+                        "details": null,
+                        "documentation": {
+                            "short": "Determines if the project has an OpenSSF (formerly CII) Best Practices Badge.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#cii-best-practices"
+                        }
+                    },
+                    {
+                        "name": "Fuzzing",
+                        "score": 0,
+                        "reason": "project is not fuzzed",
+                        "details": [
+                            "Warn: no fuzzer integrations found"
+                        ],
+                        "documentation": {
+                            "short": "Determines if the project uses fuzzing.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#fuzzing"
+                        }
+                    },
+                    {
+                        "name": "Vulnerabilities",
+                        "score": 10,
+                        "reason": "0 existing vulnerabilities detected",
+                        "details": null,
+                        "documentation": {
+                            "short": "Determines if the project has open, known unfixed vulnerabilities.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#vulnerabilities"
+                        }
+                    },
+                    {
+                        "name": "License",
+                        "score": 10,
+                        "reason": "license file detected",
+                        "details": [
+                            "Info: project has a license file: LICENSE:0",
+                            "Info: FSF or OSI recognized license: MIT License: LICENSE:0"
+                        ],
+                        "documentation": {
+                            "short": "Determines if the project has defined a license.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#license"
+                        }
+                    },
+                    {
+                        "name": "Signed-Releases",
+                        "score": -1,
+                        "reason": "no releases found",
+                        "details": null,
+                        "documentation": {
+                            "short": "Determines if the project cryptographically signs release artifacts.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#signed-releases"
+                        }
+                    },
+                    {
+                        "name": "Branch-Protection",
+                        "score": -1,
+                        "reason": "internal error: error during branchesHandler.setup: internal error: githubv4.Query: Resource not accessible by integration",
+                        "details": null,
+                        "documentation": {
+                            "short": "Determines if the default and release branches are protected with GitHub's branch protection settings.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#branch-protection"
+                        }
+                    },
+                    {
+                        "name": "Security-Policy",
+                        "score": 9,
+                        "reason": "security policy file detected",
+                        "details": [
+                            "Info: security policy file detected: github.com/minimistjs/.github/SECURITY.md:1",
+                            "Info: Found linked content: github.com/minimistjs/.github/SECURITY.md:1",
+                            "Warn: One or no descriptive hints of disclosure, vulnerability, and/or timelines in security policy",
+                            "Info: Found text in security policy: github.com/minimistjs/.github/SECURITY.md:1"
+                        ],
+                        "documentation": {
+                            "short": "Determines if the project has published a security policy.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#security-policy"
+                        }
+                    },
+                    {
+                        "name": "SAST",
+                        "score": 0,
+                        "reason": "SAST tool is not run on all commits -- score normalized to 0",
+                        "details": [
+                            "Warn: 0 commits out of 15 are checked with a SAST tool"
+                        ],
+                        "documentation": {
+                            "short": "Determines if the project uses static code analysis.",
+                            "url": "https://github.com/ossf/scorecard/blob/f6ed084d17c9236477efd66e5b258b9d4cc7b389/docs/checks.md#sast"
+                        }
+                    }
+                ]
+            },
+            "last_synced_at": "2025-08-21T12:47:56.902Z",
+            "repository_id": 61271581,
+            "created_at": "2025-08-21T12:47:56.903Z",
+            "updated_at": "2025-08-21T12:47:56.903Z"
+        },
+        "host": {
+            "name": "GitHub",
+            "url": "https://github.com",
+            "kind": "github",
+            "repositories_count": 286080680,
+            "owners_count": 33212414,
+            "icon_url": "https://github.com/github.png",
+            "version": null,
+            "created_at": "2022-05-30T11:31:42.601Z",
+            "updated_at": "2026-05-19T07:54:09.561Z",
+            "status": "ssl_error",
+            "status_checked_at": "2026-05-19T07:54:08.508Z",
+            "response_time": 58,
+            "last_error": "SSL_read: unexpected eof while reading",
+            "robots_txt_status": "success",
+            "robots_txt_updated_at": "2025-07-24T06:49:26.215Z",
+            "robots_txt_url": "https://github.com/robots.txt",
+            "online": false,
+            "can_crawl_api": true,
+            "host_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub",
+            "repositories_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/repositories",
+            "repository_names_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/repository_names",
+            "owners_url": "https://repos.ecosyste.ms/api/v1/hosts/GitHub/owners"
+        },
+        "tags": []
+    },
+    "repo_metadata_updated_at": "2026-06-01T06:14:19.507Z",
+    "dependent_packages_count": 33291,
+    "downloads": 515709910,
+    "downloads_period": "last-month",
+    "dependent_repos_count": 2004702,
+    "rankings": {
+        "downloads": 0.0031760599552504106,
+        "dependent_repos_count": 0.015496982195445968,
+        "dependent_packages_count": 0.0032581994368517143,
+        "stargazers_count": 3.1788253177976546,
+        "forks_count": 4.670534342115963,
+        "docker_downloads_count": 0.004873609241677354,
+        "average": 1.3126940851238071
+    },
+    "purl": "pkg:npm/minimist",
+    "advisories": [
+        {
+            "uuid": "GSA_kwCzR0hTQS14dmNoLTVndjQtOTg0aM0z6A",
+            "url": "https://github.com/advisories/GHSA-xvch-5gv4-984h",
+            "title": "Prototype Pollution in minimist",
+            "description": "Minimist prior to 1.2.6 and 0.2.4 is vulnerable to Prototype Pollution via file `index.js`, function `setKey()` (lines 69-95).",
+            "origin": "UNSPECIFIED",
+            "severity": "CRITICAL",
+            "published_at": "2022-03-18T00:01:09.000Z",
+            "withdrawn_at": null,
+            "classification": "GENERAL",
+            "cvss_score": 9.8,
+            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+            "references": [
+                "https://nvd.nist.gov/vuln/detail/CVE-2021-44906",
+                "https://github.com/substack/minimist/issues/164",
+                "https://github.com/substack/minimist/blob/master/index.js#L69",
+                "https://snyk.io/vuln/SNYK-JS-MINIMIST-559764",
+                "https://stackoverflow.com/questions/8588563/adding-custom-properties-to-a-function/20278068#20278068",
+                "https://github.com/Marynk/JavaScript-vulnerability-detection/blob/main/minimist%20PoC.zip",
+                "https://github.com/minimistjs/minimist/issues/11",
+                "https://github.com/minimistjs/minimist/pull/24",
+                "https://github.com/minimistjs/minimist/commit/34e20b8461118608703d6485326abbb8e35e1703",
+                "https://github.com/minimistjs/minimist/commit/bc8ecee43875261f4f17eb20b1243d3ed15e70eb",
+                "https://github.com/minimistjs/minimist/commit/c2b981977fa834b223b408cfb860f933c9811e4d",
+                "https://github.com/minimistjs/minimist/commit/ef9153fc52b6cea0744b2239921c5dcae4697f11",
+                "https://github.com/minimistjs/minimist/commits/v0.2.4",
+                "https://security.netapp.com/advisory/ntap-20240621-0006",
+                "https://github.com/advisories/GHSA-xvch-5gv4-984h"
+            ],
+            "source_kind": "github",
+            "identifiers": [
+                "GHSA-xvch-5gv4-984h",
+                "CVE-2021-44906"
+            ],
+            "repository_url": "https://github.com/substack/minimist",
+            "blast_radius": 0.0,
+            "created_at": "2022-12-21T16:12:31.043Z",
+            "updated_at": "2026-05-28T19:09:34.614Z",
+            "epss_percentage": 0.00789,
+            "epss_percentile": 0.74083,
+            "api_url": "https://advisories.ecosyste.ms/api/v1/advisories/GSA_kwCzR0hTQS14dmNoLTVndjQtOTg0aM0z6A",
+            "html_url": "https://advisories.ecosyste.ms/advisories/GSA_kwCzR0hTQS14dmNoLTVndjQtOTg0aM0z6A",
+            "packages": [
+                {
+                    "ecosystem": "npm",
+                    "package_name": "minimist",
+                    "versions": [
+                        {
+                            "first_patched_version": "0.2.4",
+                            "vulnerable_version_range": "< 0.2.4"
+                        },
+                        {
+                            "first_patched_version": "1.2.6",
+                            "vulnerable_version_range": ">= 1.0.0, < 1.2.6"
+                        }
+                    ],
+                    "purl": "pkg:npm/minimist"
+                }
+            ],
+            "related_packages_url": "https://advisories.ecosyste.ms/api/v1/advisories/GSA_kwCzR0hTQS14dmNoLTVndjQtOTg0aM0z6A/related_packages",
+            "related_advisories": []
+        },
+        {
+            "uuid": "MDE2OlNlY3VyaXR5QWR2aXNvcnlHSFNBLXZoOTUtcm1nci02dzRt",
+            "url": "https://github.com/advisories/GHSA-vh95-rmgr-6w4m",
+            "title": "Prototype Pollution in minimist",
+            "description": "Affected versions of `minimist` are vulnerable to prototype pollution. Arguments are not properly sanitized, allowing an attacker to modify the prototype of `Object`, causing the addition or modification of an existing property that will exist on all objects.  \nParsing the argument `--__proto__.y=Polluted` adds a `y` property with value `Polluted` to all objects. The argument `--__proto__=Polluted` raises and uncaught error and crashes the application.  \nThis is exploitable if attackers have control over the arguments being passed to `minimist`.\n\n\n## Recommendation\n\nUpgrade to versions 0.2.1, 1.2.3 or later.",
+            "origin": "UNSPECIFIED",
+            "severity": "MODERATE",
+            "published_at": "2020-04-03T21:48:32.000Z",
+            "withdrawn_at": null,
+            "classification": "GENERAL",
+            "cvss_score": 5.6,
+            "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L",
+            "references": [
+                "https://nvd.nist.gov/vuln/detail/CVE-2020-7598",
+                "https://snyk.io/vuln/SNYK-JS-MINIMIST-559764",
+                "http://lists.opensuse.org/opensuse-security-announce/2020-06/msg00024.html",
+                "https://www.npmjs.com/advisories/1179",
+                "https://github.com/minimistjs/minimist/commit/10bd4cdf49d9686d48214be9d579a9cdfda37c68",
+                "https://github.com/minimistjs/minimist/commit/38a4d1caead72ef99e824bb420a2528eec03d9ab",
+                "https://github.com/minimistjs/minimist/commit/4cf1354839cb972e38496d35e12f806eea92c11f#diff-a1e0ee62c91705696ddb71aa30ad4f95",
+                "https://github.com/minimistjs/minimist/commit/63e7ed05aa4b1889ec2f3b196426db4500cbda94",
+                "https://github.com/advisories/GHSA-vh95-rmgr-6w4m"
+            ],
+            "source_kind": "github",
+            "identifiers": [
+                "GHSA-vh95-rmgr-6w4m",
+                "CVE-2020-7598"
+            ],
+            "repository_url": "https://github.com/minimistjs/minimist",
+            "blast_radius": 0.0,
+            "created_at": "2022-12-21T16:13:25.482Z",
+            "updated_at": "2026-05-28T19:09:39.031Z",
+            "epss_percentage": 0.00195,
+            "epss_percentile": 0.41126,
+            "api_url": "https://advisories.ecosyste.ms/api/v1/advisories/MDE2OlNlY3VyaXR5QWR2aXNvcnlHSFNBLXZoOTUtcm1nci02dzRt",
+            "html_url": "https://advisories.ecosyste.ms/advisories/MDE2OlNlY3VyaXR5QWR2aXNvcnlHSFNBLXZoOTUtcm1nci02dzRt",
+            "packages": [
+                {
+                    "ecosystem": "npm",
+                    "package_name": "minimist",
+                    "versions": [
+                        {
+                            "first_patched_version": "1.2.3",
+                            "vulnerable_version_range": ">= 1.0.0, < 1.2.3"
+                        },
+                        {
+                            "first_patched_version": "0.2.1",
+                            "vulnerable_version_range": "< 0.2.1"
+                        }
+                    ],
+                    "purl": "pkg:npm/minimist"
+                }
+            ],
+            "related_packages_url": "https://advisories.ecosyste.ms/api/v1/advisories/MDE2OlNlY3VyaXR5QWR2aXNvcnlHSFNBLXZoOTUtcm1nci02dzRt/related_packages",
+            "related_advisories": []
+        },
+        {
+            "uuid": "MDE2OlNlY3VyaXR5QWR2aXNvcnlHSFNBLTdmaG0tbXFtNC0yd3A3",
+            "url": "https://github.com/advisories/GHSA-7fhm-mqm4-2wp7",
+            "title": "Withdrawn: ESLint dependencies are vulnerable (ReDoS and Prototype Pollution)",
+            "description": "**Withdrawn**\nGitHub has withdrawn this advisory in place of GHSA-vh95-rmgr-6w4m and GHSA-6chw-6frg-f759.\nThe reason for withdrawing is that some mistakes were made during the ingestion of CVE-2020-7598\nwhich caused this advisory to be published with incorrect information.\n\nIn order to provide accurate advisory information, new advisories were created:\n\n- minimist: https://github.com/advisories/GHSA-vh95-rmgr-6w4m\n- acorn: https://github.com/advisories/GHSA-6chw-6frg-f759",
+            "origin": "UNSPECIFIED",
+            "severity": "MODERATE",
+            "published_at": "2020-03-13T20:36:16.000Z",
+            "withdrawn_at": "2020-04-03T21:47:06.000Z",
+            "classification": "GENERAL",
+            "cvss_score": 0.0,
+            "cvss_vector": null,
+            "references": [
+                "https://github.com/advisories/GHSA-6chw-6frg-f759",
+                "https://github.com/advisories/GHSA-vh95-rmgr-6w4m",
+                "https://github.com/advisories/GHSA-7fhm-mqm4-2wp7"
+            ],
+            "source_kind": "github",
+            "identifiers": [
+                "GHSA-7fhm-mqm4-2wp7"
+            ],
+            "repository_url": null,
+            "blast_radius": 0.0,
+            "created_at": "2022-12-21T16:12:59.778Z",
+            "updated_at": "2026-06-01T12:11:17.829Z",
+            "epss_percentage": null,
+            "epss_percentile": null,
+            "api_url": "https://advisories.ecosyste.ms/api/v1/advisories/MDE2OlNlY3VyaXR5QWR2aXNvcnlHSFNBLTdmaG0tbXFtNC0yd3A3",
+            "html_url": "https://advisories.ecosyste.ms/advisories/MDE2OlNlY3VyaXR5QWR2aXNvcnlHSFNBLTdmaG0tbXFtNC0yd3A3",
+            "packages": [
+                {
+                    "ecosystem": "npm",
+                    "package_name": "acorn",
+                    "versions": [
+                        {
+                            "first_patched_version": "7.1.1",
+                            "vulnerable_version_range": ">= 7.0.0, < 7.1.1"
+                        },
+                        {
+                            "first_patched_version": "6.4.1",
+                            "vulnerable_version_range": ">= 6.0.0, < 6.4.1"
+                        },
+                        {
+                            "first_patched_version": "5.7.4",
+                            "vulnerable_version_range": "< 5.7.4"
+                        }
+                    ],
+                    "purl": "pkg:npm/acorn",
+                    "statistics": {
+                        "dependent_packages_count": 8880,
+                        "dependent_repos_count": 1121780,
+                        "downloads": 832469195,
+                        "downloads_period": "last-month"
+                    },
+                    "affected_versions": [
+                        "0.0.1",
+                        "0.1.0",
+                        "0.2.0",
+                        "0.3.0",
+                        "0.3.1",
+                        "0.4.0",
+                        "0.4.2",
+                        "0.5.0",
+                        "0.6.0",
+                        "0.7.0",
+                        "0.8.0",
+                        "0.9.0",
+                        "0.10.0",
+                        "0.11.0",
+                        "0.12.0",
+                        "1.0.0",
+                        "1.0.1",
+                        "1.0.3",
+                        "1.1.0",
+                        "1.2.0",
+                        "1.2.1",
+                        "1.2.2",
+                        "2.0.0",
+                        "2.0.1",
+                        "2.0.4",
+                        "2.1.0",
+                        "2.2.0",
+                        "2.3.0",
+                        "2.4.0",
+                        "2.5.0",
+                        "2.5.2",
+                        "2.6.0",
+                        "2.6.2",
+                        "2.6.4",
+                        "2.7.0",
+                        "3.0.0",
+                        "3.0.2",
+                        "3.0.4",
+                        "3.1.0",
+                        "3.2.0",
+                        "3.3.0",
+                        "4.0.0",
+                        "4.0.1",
+                        "4.0.2",
+                        "4.0.3",
+                        "4.0.4",
+                        "4.0.5",
+                        "4.0.6",
+                        "4.0.7",
+                        "4.0.8",
+                        "4.0.9",
+                        "4.0.10",
+                        "4.0.11",
+                        "4.0.13",
+                        "5.0.0",
+                        "5.0.1",
+                        "5.0.2",
+                        "5.0.3",
+                        "5.1.0",
+                        "5.1.1",
+                        "5.1.2",
+                        "5.2.0",
+                        "5.2.1",
+                        "5.3.0",
+                        "5.4.0",
+                        "5.4.1",
+                        "5.5.0",
+                        "5.5.1",
+                        "5.5.2",
+                        "5.5.3",
+                        "5.6.0",
+                        "5.6.1",
+                        "5.6.2",
+                        "5.7.0",
+                        "5.7.1",
+                        "5.7.2",
+                        "5.7.3",
+                        "6.0.0",
+                        "6.0.1",
+                        "6.0.2",
+                        "6.0.3",
+                        "6.0.4",
+                        "6.0.5",
+                        "6.0.6",
+                        "6.0.7",
+                        "6.1.0",
+                        "6.1.1",
+                        "6.2.0",
+                        "6.2.1",
+                        "6.3.0",
+                        "6.4.0",
+                        "7.0.0",
+                        "7.1.0"
+                    ],
+                    "unaffected_versions": [
+                        "5.7.4",
+                        "6.4.1",
+                        "6.4.2",
+                        "7.1.1",
+                        "7.2.0",
+                        "7.3.0",
+                        "7.3.1",
+                        "7.4.0",
+                        "7.4.1",
+                        "8.0.0",
+                        "8.0.1",
+                        "8.0.2",
+                        "8.0.3",
+                        "8.0.4",
+                        "8.0.5",
+                        "8.1.0",
+                        "8.1.1",
+                        "8.2.0",
+                        "8.2.1",
+                        "8.2.2",
+                        "8.2.3",
+                        "8.2.4",
+                        "8.3.0",
+                        "8.4.0",
+                        "8.4.1",
+                        "8.5.0",
+                        "8.6.0",
+                        "8.7.0",
+                        "8.7.1",
+                        "8.8.0",
+                        "8.8.1",
+                        "8.8.2",
+                        "8.9.0",
+                        "8.10.0",
+                        "8.11.0",
+                        "8.11.1",
+                        "8.11.2",
+                        "8.11.3",
+                        "8.12.0",
+                        "8.12.1",
+                        "8.13.0",
+                        "8.14.0",
+                        "8.14.1",
+                        "8.15.0",
+                        "8.16.0"
+                    ]
+                },
+                {
+                    "ecosystem": "npm",
+                    "package_name": "minimist",
+                    "versions": [
+                        {
+                            "first_patched_version": "1.2.2",
+                            "vulnerable_version_range": "< 1.2.2"
+                        }
+                    ],
+                    "purl": "pkg:npm/minimist",
+                    "statistics": {
+                        "dependent_packages_count": 33291,
+                        "dependent_repos_count": 2004702,
+                        "downloads": 515709910,
+                        "downloads_period": "last-month"
+                    },
+                    "affected_versions": [
+                        "0.0.0",
+                        "0.0.1",
+                        "0.0.2",
+                        "0.0.3",
+                        "0.0.4",
+                        "0.0.5",
+                        "0.0.6",
+                        "0.0.7",
+                        "0.0.8",
+                        "0.0.9",
+                        "0.0.10",
+                        "0.1.0",
+                        "0.2.0",
+                        "0.2.1",
+                        "0.2.2",
+                        "0.2.3",
+                        "0.2.4",
+                        "1.0.0",
+                        "1.1.0",
+                        "1.1.1",
+                        "1.1.2",
+                        "1.1.3",
+                        "1.2.0",
+                        "1.2.1"
+                    ],
+                    "unaffected_versions": [
+                        "1.2.2",
+                        "1.2.3",
+                        "1.2.4",
+                        "1.2.5",
+                        "1.2.6",
+                        "1.2.7",
+                        "1.2.8"
+                    ]
+                }
+            ],
+            "related_packages_url": "https://advisories.ecosyste.ms/api/v1/advisories/MDE2OlNlY3VyaXR5QWR2aXNvcnlHSFNBLTdmaG0tbXFtNC0yd3A3/related_packages",
+            "related_advisories": []
+        }
+    ],
+    "docker_usage_url": "https://docker.ecosyste.ms/usage/npm/minimist",
+    "docker_dependents_count": 54147,
+    "docker_downloads_count": 12772009106,
+    "usage_url": "https://repos.ecosyste.ms/usage/npm/minimist",
+    "dependent_repositories_url": "https://repos.ecosyste.ms/api/v1/usage/npm/minimist/dependencies",
+    "status": null,
+    "funding_links": [
+        "https://github.com/sponsors/ljharb",
+        "https://tidelift.com/funding/github/npm/minimist"
+    ],
+    "critical": true,
+    "issue_metadata": {
+        "last_synced_at": "2026-03-18T03:20:26.407Z",
+        "issues_count": 52,
+        "pull_requests_count": 41,
+        "avg_time_to_close_issue": 5113383.368421053,
+        "avg_time_to_close_pull_request": 5943037.514285714,
+        "issues_closed_count": 38,
+        "pull_requests_closed_count": 35,
+        "pull_request_authors_count": 14,
+        "issue_authors_count": 36,
+        "avg_comments_per_issue": 4.076923076923077,
+        "avg_comments_per_pull_request": 3.6097560975609757,
+        "merged_pull_requests_count": 19,
+        "bot_issues_count": 0,
+        "bot_pull_requests_count": 0,
+        "past_year_issues_count": 4,
+        "past_year_pull_requests_count": 4,
+        "past_year_avg_time_to_close_issue": 6748.0,
+        "past_year_avg_time_to_close_pull_request": 2028722.5,
+        "past_year_issues_closed_count": 1,
+        "past_year_pull_requests_closed_count": 2,
+        "past_year_pull_request_authors_count": 3,
+        "past_year_issue_authors_count": 4,
+        "past_year_avg_comments_per_issue": 1.0,
+        "past_year_avg_comments_per_pull_request": 3.75,
+        "past_year_bot_issues_count": 0,
+        "past_year_bot_pull_requests_count": 0,
+        "past_year_merged_pull_requests_count": 0,
+        "issues_url": "https://issues.ecosyste.ms/api/v1/hosts/GitHub/repositories/minimistjs%2Fminimist/issues",
+        "maintainers": [
+            {
+                "login": "shadowspawn",
+                "count": 30,
+                "url": "https://issues.ecosyste.ms/api/v1/hosts/GitHub/authors/shadowspawn"
+            }
+        ],
+        "active_maintainers": []
+    },
+    "versions_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/packages/minimist/versions",
+    "version_numbers_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/packages/minimist/version_numbers",
+    "latest_version_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/packages/minimist/latest_version",
+    "dependent_packages_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/packages/minimist/dependent_packages",
+    "related_packages_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/packages/minimist/related_packages",
+    "codemeta_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/packages/minimist/codemeta",
+    "maintainers": [
+        {
+            "uuid": "ljharb",
+            "login": "ljharb",
+            "name": null,
+            "email": "ljharb@gmail.com",
+            "url": null,
+            "packages_count": 560,
+            "html_url": "https://www.npmjs.com/~ljharb",
+            "role": null,
+            "created_at": "2022-11-15T22:20:56.506Z",
+            "updated_at": "2022-11-15T22:20:56.506Z",
+            "packages_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/maintainers/ljharb/packages"
+        },
+        {
+            "uuid": "shadowspawn",
+            "login": "shadowspawn",
+            "name": null,
+            "email": "npm_j@ruru.gen.nz",
+            "url": null,
+            "packages_count": 7,
+            "html_url": "https://www.npmjs.com/~shadowspawn",
+            "role": null,
+            "created_at": "2023-02-09T07:06:45.853Z",
+            "updated_at": "2023-02-09T07:06:45.853Z",
+            "packages_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/maintainers/shadowspawn/packages"
+        },
+        {
+            "uuid": "emilbayes",
+            "login": "emilbayes",
+            "name": null,
+            "email": "github@tixz.dk",
+            "url": null,
+            "packages_count": 254,
+            "html_url": "https://www.npmjs.com/~emilbayes",
+            "role": null,
+            "created_at": "2022-11-15T22:20:56.522Z",
+            "updated_at": "2022-11-15T22:20:56.522Z",
+            "packages_url": "https://packages.ecosyste.ms/api/v1/registries/npmjs.org/maintainers/emilbayes/packages"
+        }
+    ]
+}

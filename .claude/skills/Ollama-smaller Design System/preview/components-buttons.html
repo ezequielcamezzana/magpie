@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../source/base.css">
+<style>
+  body{padding:24px 26px;background:#fff;}
+  .row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .row + .row{margin-top:16px;}
+  .lab{font-family:var(--font-mono);font-size:10px;color:var(--color-mute);width:74px;}
+</style>
+</head>
+<body>
+  <div class="row"><span class="lab">primary</span><button class="btn-primary">Save changes</button><button class="btn-primary" disabled>Disabled</button></div>
+  <div class="row"><span class="lab">secondary</span><button class="btn-secondary">Cancel</button><button class="btn-secondary" disabled>Disabled</button></div>
+</body>
+</html>

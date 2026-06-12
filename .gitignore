@@ -1,0 +1,11 @@
+/magpie
+/cmd/magpie/magpie
+/bin/
+.DS_Store
+*.db
+*.db-journal
+*.test
+*.out
+coverage.txt
+.envrc
+.env

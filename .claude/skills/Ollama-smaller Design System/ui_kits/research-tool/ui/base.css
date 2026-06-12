@@ -1,0 +1,299 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Shared base components — "Ollama, smaller".
+   Portable: copy verbatim, do NOT edit per app. App-specific classes live in
+   the app's own app.css. Requires tokens.css (loaded first).
+
+   Pure monochrome: ink, white, grey. There is no brand color — the app's only
+   color is its icon image (.nav-logo) and the .sev-* severity palette.
+   No box-shadow, no gradients — elevation is a 1px hairline or a dark surface.
+   ────────────────────────────────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0}
+[x-cloak]{display:none !important}
+
+body{
+  background:var(--color-canvas);
+  color:var(--color-body);
+  font-family:var(--font-body);
+  font-size:14px;
+  line-height:1.45;
+}
+
+/* Focus ring — neutral grey. No brand color anywhere in the system. */
+:focus-visible{ outline:2px solid var(--color-charcoal); outline-offset:1px; }
+
+/* width:100% so it keeps full width inside a flex column (sticky-footer body),
+   where flex items otherwise shrink to content. max-width + auto margins center it. */
+.container{ width:100%; max-width:860px; margin:0 auto; padding:0 var(--space-lg); }
+
+/* Topbar. Left = logo + wordmark + navigation, glued together. Right = actions.
+   Borderless, 48px. The wordmark is ink; the app's ONLY spot of color is the
+   logo image (.nav-logo). */
+.nav{
+  height:56px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  position:sticky;          /* keep the topbar pinned while content scrolls */
+  top:0;
+  z-index:50;
+  background:var(--color-canvas);
+}
+.nav-left{ display:flex; align-items:center; gap:var(--space-lg); }
+.nav-brand{
+  display:flex; align-items:center; gap:var(--space-sm);
+  font-family:var(--font-display);
+  font-weight:600;
+  font-size:16px;
+  color:var(--color-ink);
+  text-decoration:none;
+}
+.nav-logo{ height:45px; width:45px; object-fit:contain; }   /* the one spot of color */
+.nav-links{ display:flex; align-items:center; gap:var(--space-lg); }
+/* Plain-text nav items (Ollama-style): active is underlined ink, not a pill. */
+.nav-link{
+  font-size:14px;
+  color:var(--color-charcoal);
+  text-decoration:none;
+  padding:4px 0;
+}
+.nav-link:hover{ color:var(--color-ink); }
+.nav-link.active{
+  color:var(--color-ink);
+  text-decoration:underline;
+  text-underline-offset:4px;
+}
+.nav-actions{ display:flex; align-items:center; gap:var(--space-sm); }
+
+.hero{
+  font-family:var(--font-display);
+  font-size:24px;
+  font-weight:500;
+  line-height:1.2;
+  color:var(--color-ink);
+  text-align:center;
+}
+.hero-sub{ text-align:center; color:var(--color-mute); margin-top:var(--space-xs); font-size:13px; }
+
+.section{ margin-top:var(--space-xl); }
+.stack > * + *{ margin-top:var(--space-md); }
+
+.form{ display:flex; gap:var(--space-sm); margin-top:var(--space-lg); }
+
+/* Filter/controls bar — search + selects on the left, pager (with result count)
+   on the right, all on ONE line. The search is capped (320px), never full-width.
+   Use this for any list with filtering/sorting/pagination. */
+.filter-bar{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:var(--space-md); margin-bottom:var(--space-lg);
+  flex-wrap:wrap;
+}
+.filter-left{ display:flex; align-items:center; gap:var(--space-sm); flex:1; }
+.search-input{
+  flex:1;
+  max-width:320px;
+  height:36px;
+  padding:0 14px;
+  font:13px var(--font-body);
+  border:1px solid var(--color-hairline-strong);
+  border-radius:var(--radius-full);
+  background:var(--color-canvas);
+  color:var(--color-ink);
+}
+.search-input:focus{ border-color:var(--color-ink); outline:none; }
+
+.input-pill{
+  background:var(--color-canvas);
+  border:1px solid var(--color-hairline);
+  border-radius:var(--radius-full);
+  height:36px;
+  padding:6px 14px;
+  font:14px var(--font-body);
+  width:100%;
+}
+.input-pill:focus{ border-color:var(--color-ink); outline:none; }
+
+/* Select — pill with a grey caret (appearance stripped). */
+.select-pill{
+  height:36px;
+  padding:0 34px 0 16px;
+  font:13px var(--font-body);
+  border:1px solid var(--color-hairline-strong);
+  border-radius:var(--radius-full);
+  background-color:var(--color-canvas);
+  color:var(--color-ink);
+  cursor:pointer;
+  outline:none;
+  -webkit-appearance:none;
+  appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'><path d='M1 1l4 4 4-4' stroke='%23737373' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat:no-repeat;
+  background-position:right 14px center;
+}
+.select-pill:focus{ border-color:var(--color-ink); }
+
+.btn-primary{
+  background:var(--color-ink);            /* CTAs are ink (black) */
+  color:#fff;
+  border:none;
+  border-radius:var(--radius-full);
+  height:32px;
+  padding:6px 16px;
+  font:500 13px var(--font-body);
+  cursor:pointer;
+  white-space:nowrap;
+  display:inline-flex; align-items:center; gap:6px;
+}
+.btn-primary:active{ background:var(--color-ink-deep); }
+.btn-primary:disabled{ background:var(--color-surface-soft); color:var(--color-mute); cursor:default; }
+
+.btn-secondary{
+  background:var(--color-canvas);
+  color:var(--color-ink);
+  border:1px solid var(--color-hairline-strong);
+  border-radius:var(--radius-full);
+  height:32px;
+  padding:6px 16px;
+  font:500 13px var(--font-body);
+  cursor:pointer;
+  white-space:nowrap;
+  display:inline-flex; align-items:center; gap:6px;
+}
+.btn-secondary:hover{ border-color:var(--color-ink); }
+.btn-secondary:disabled{ color:var(--color-mute); border-color:var(--color-hairline); cursor:default; }
+
+/* Tabs: inactive = quiet text, active = ink. */
+.tabs{ display:flex; gap:var(--space-lg); }
+.tab{
+  background:none; border:none; cursor:pointer;
+  font:500 13px var(--font-body);
+  color:var(--color-mute);
+  padding:4px 0;
+  border-bottom:2px solid transparent;
+}
+.tab.active{ color:var(--color-ink); border-bottom-color:var(--color-ink); }
+
+.badge{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:var(--radius-full);
+  font-family:var(--font-mono);
+  font-size:11px;
+  background:var(--color-surface-soft);
+  color:var(--color-ink);
+}
+.badge-dark{ background:var(--color-surface-dark); color:#fff; }
+
+/* Severity badge — the only colored element in the system (see DESIGN.md).
+   Soft tint background + matching dark ink + a colored border (Meerkat ramp). */
+.sev{
+  display:inline-flex;
+  align-items:center;
+  padding:1px 7px;
+  border-radius:var(--radius-full);
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.02em;
+  white-space:nowrap;
+  border:1px solid transparent;
+}
+.sev-critical{ background:var(--color-severity-critical); color:var(--color-severity-critical-ink); border-color:var(--color-severity-critical-border); }
+.sev-high{ background:var(--color-severity-high); color:var(--color-severity-high-ink); border-color:var(--color-severity-high-border); }
+.sev-medium{ background:var(--color-severity-medium); color:var(--color-severity-medium-ink); border-color:var(--color-severity-medium-border); }
+.sev-low{ background:var(--color-severity-low); color:var(--color-severity-low-ink); border-color:var(--color-severity-low-border); }
+.sev-none{ background:var(--color-severity-none); color:var(--color-severity-none-ink); border-color:var(--color-severity-none-border); }
+
+/* Status badges — lifecycle pills (tint bg + ink text + colored border).
+   Extends .sev with two non-severity states. */
+.sev-clean{ background:var(--color-surface-soft); color:var(--color-charcoal); border-color:var(--color-hairline); }
+.sev-vuln{ background:var(--color-surface-dark); color:#fff; border-color:transparent; }
+.sev-stale{ background:var(--color-surface-soft); color:var(--color-mute); border-color:var(--color-hairline); }
+
+/* Status dots — 6px lifecycle/severity indicators. */
+.dot{ display:inline-block; width:6px; height:6px; border-radius:50%; flex:none; vertical-align:middle; }
+.dot-clean{ background:var(--color-status-clean); }
+.dot-low{ background:var(--color-status-low); }
+.dot-medium{ background:var(--color-status-medium); }
+.dot-high{ background:var(--color-status-high); }
+.dot-critical{ background:var(--color-status-critical); }
+.dot-vuln{ background:var(--color-status-vuln); }
+.dot-stale{ background:var(--color-status-stale); }
+
+/* Timeline squares — 13px activity cells on a hairline track. */
+.tl{ display:inline-block; width:13px; height:13px; border-radius:3px; background:var(--color-tl-empty); }
+.tl-empty{ background:var(--color-tl-empty); }
+.tl-clean{ background:var(--color-tl-clean); }
+.tl-low{ background:var(--color-tl-low); }
+.tl-medium{ background:var(--color-tl-medium); }
+.tl-high,.tl-vuln{ background:var(--color-tl-high); }
+.tl-critical{ background:var(--color-tl-critical); }
+
+.card{
+  background:var(--color-canvas);
+  border:1px solid var(--color-hairline);
+  border-radius:var(--radius-lg);
+  padding:var(--space-lg);
+}
+.card-strong{ border-color:var(--color-hairline-strong); }
+.card-title{ font-family:var(--font-display); font-size:18px; font-weight:600; line-height:1.3; color:var(--color-ink); }
+.card-row{ margin-top:var(--space-sm); }
+.card-row a{ color:var(--color-ink); text-decoration:underline; }
+
+.code-block{
+  background:var(--color-surface-soft);
+  font-family:var(--font-mono);
+  font-size:13px;
+  padding:var(--space-md);
+  border-radius:var(--radius-lg);
+  overflow:auto;
+  white-space:pre-wrap;
+  color:var(--color-ink);
+}
+
+/* Pager — sits ABOVE the data, never below. Pair page-btns with a label. */
+.pager{
+  display:flex; align-items:center; gap:var(--space-sm);
+  font-size:13px; color:var(--color-charcoal);
+}
+.page-btn{
+  height:32px; min-width:32px; padding:0 10px;
+  border:1px solid var(--color-hairline-strong);
+  border-radius:var(--radius-full);
+  background:var(--color-canvas);
+  color:var(--color-charcoal);
+  font-size:13px;
+  cursor:pointer;
+}
+.page-btn:disabled{ opacity:.35; cursor:default; }
+.page-btn:not(:disabled):hover{ background:var(--color-surface-soft); }
+
+/* Collapsible — toggle .open on .collapse to reveal .collapse-body.
+   The chevron char (▶) goes in the markup; .open rotates it 90°. */
+.collapse-header{
+  display:flex; align-items:center; gap:var(--space-sm);
+  cursor:pointer; user-select:none;
+}
+.collapse-chevron{
+  color:var(--color-mute);
+  font-size:11px;
+  transition:transform .15s;
+  flex-shrink:0;
+}
+.collapse.open .collapse-chevron{ transform:rotate(90deg); }
+.collapse-body{ display:none; }
+.collapse.open .collapse-body{ display:block; }
+
+/* Footer — meta on the left (brand · version · year), external links on the
+   right. The quiet home for GitHub/Docs/Install. Never in the nav. */
+.footer{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:var(--space-lg);
+  margin-top:var(--space-xl);
+  padding:var(--space-lg) var(--space-xl);
+  font-size:13px;
+  color:var(--color-body);
+}
+.footer-meta{ color:var(--color-body); }
+.footer-links{ display:flex; align-items:center; gap:var(--space-lg); }
+.icon-link{ color:var(--color-mute); display:inline-flex; align-items:center; }
+.icon-link:hover{ color:var(--color-ink); }
+.icon-link svg{ width:20px; height:20px; display:block; }

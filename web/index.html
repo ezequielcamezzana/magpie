@@ -1,0 +1,2294 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Magpie</title>
+        <link rel="icon" href="/static/favicon.ico" />
+        <link rel="stylesheet" href="/static/ui/tokens.css" />
+        <link rel="stylesheet" href="/static/ui/base.css" />
+        <link rel="stylesheet" href="/static/app.css" />
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
+        ></script>
+        <script>
+            // Shared severity bucket (CVSS) — drives every .sev-* / CVSS pill tint.
+            function svcBucket(s) {
+                if (s >= 9) return "critical";
+                if (s >= 7) return "high";
+                if (s >= 4) return "medium";
+                if (s > 0) return "low";
+                return "none";
+            }
+            // GitHub advisory URL when a GHSA id exists (original/canonical/aliases), else "".
+            function githubURL(v) {
+                const ids = [
+                    v.OriginalID,
+                    v.CanonicalID,
+                    ...(v.Aliases || []),
+                ].filter(Boolean);
+                const ghsa = ids.find((i) => i.startsWith("GHSA-"));
+                return ghsa ? "https://github.com/advisories/" + ghsa : "";
+            }
+            // OSV record URL — only shown for OSV-sourced records.
+            function osvURL(v) {
+                return (
+                    "https://osv.dev/vulnerability/" +
+                    (v.OriginalID || v.CanonicalID)
+                );
+            }
+
+            // Grouped advisory card (.vc-card) helpers — Collect view.
+            function vcLabel(s) {
+                const b = svcBucket(s);
+                return b === "none" ? "unknown" : b;
+            }
+            // Advisory title/summary from the raw payload (ecosyste.ms: title, osv: summary).
+            function recTitle(r) {
+                const p = r.Payload || {};
+                return p.title || p.summary || "";
+            }
+            // Group freshness tags: NEW if created in the last 24h, UPDATED if updated in
+            // the last 24h (and not already NEW, since a fresh vuln is both).
+            function within24h(iso) {
+                return (
+                    !vcEmptyDate(iso) && Date.now() - new Date(iso) <= 86400000
+                );
+            }
+            function isNew(g) {
+                return within24h(g.Created);
+            }
+            function isUpdated(g) {
+                return !isNew(g) && within24h(g.Updated);
+            }
+            // Ecosystem from a spurl: pkg:npm/… → npm.
+            function ecoOf(spurl) {
+                const m = (spurl || "").match(/^pkg:([^/]+)\//);
+                return m ? m[1] : "";
+            }
+            function vcEmptyDate(iso) {
+                return !iso || iso.startsWith("0001");
+            } // Go zero time
+            function vcFmtDate(iso) {
+                if (vcEmptyDate(iso)) return "—";
+                const d = new Date(iso),
+                    p = (n) => String(n).padStart(2, "0");
+                return (
+                    p(d.getUTCDate()) +
+                    "/" +
+                    p(d.getUTCMonth() + 1) +
+                    "/" +
+                    d.getUTCFullYear()
+                );
+            }
+            function vcRel(iso) {
+                if (vcEmptyDate(iso)) return "";
+                const days = Math.round(
+                    (Date.now() - new Date(iso)) / 86400000,
+                );
+                if (days <= 0) return "today";
+                if (days === 1) return "1 day ago";
+                if (days < 30) return days + " days ago";
+                const months = Math.round(days / 30);
+                if (months < 12)
+                    return months === 1
+                        ? "1 month ago"
+                        : months + " months ago";
+                const years = Math.round(days / 365);
+                return years === 1 ? "1 year ago" : years + " years ago";
+            }
+
+            function router() {
+                const fromHash = () => {
+                    const h = location.hash.slice(1);
+                    if (h.startsWith("vuln/")) return "vuln";
+                    if (h.startsWith("component/")) return "component";
+                    return ["vulns", "components", "cpes"].includes(h) ? h : "collect";
+                };
+                return {
+                    view: fromHash(),
+                    sync() {
+                        this.view = fromHash();
+                    },
+                    go(v) {
+                        this.view = v;
+                        location.hash = "#" + v;
+                    },
+                };
+            }
+
+            // bundleView(mode) — UNA instancia por página, recreada por el x-for keyed por
+            // view (sin estado compartido entre Collect y Component). El filtro/orden/
+            // paginación de vulns los hace el BE (vpage/vorder/vfilter).
+            function bundleView(mode) {
+                return {
+                    mode,
+                    coord: "",
+                    spurl: "",
+                    loading: false,
+                    result: null,
+                    error: null,
+                    groupFilter: "affected",
+                    expanded: {},
+                    vpage: 1,
+                    vorder: "severity",
+                    vmeta: {
+                        Page: 1,
+                        Pages: 1,
+                        Total: 0,
+                        All: 0,
+                        Affected: 0,
+                        Order: "severity",
+                        Filter: "all",
+                    },
+                    _h: null,
+                    init() {
+                        if (this.mode === "component") {
+                            this.spurl = this.spurlFromHash();
+                            this.load();
+                            // X→Y dentro de la misma vista component: recargar al cambiar el spurl.
+                            this._h = () => {
+                                const s = this.spurlFromHash();
+                                if (s && s !== this.spurl) {
+                                    this.spurl = s;
+                                    this.vpage = 1;
+                                    this.expanded = {};
+                                    this.load();
+                                }
+                            };
+                            window.addEventListener("hashchange", this._h);
+                        }
+                    },
+                    destroy() {
+                        if (this._h)
+                            window.removeEventListener("hashchange", this._h);
+                    },
+                    spurlFromHash() {
+                        const m = location.hash.match(/^#component\/(.+)$/);
+                        return m ? decodeURIComponent(m[1]) : "";
+                    },
+                    // Prepend "pkg:" so the user never has to type it (idempotent if pasted).
+                    normalizedCoord() {
+                        const c = (this.coord || "").trim();
+                        if (!c) return "";
+                        return c.startsWith("pkg:") ? c : "pkg:" + c;
+                    },
+                    run() {
+                        if (!this.normalizedCoord()) return;
+                        this.vpage = 1;
+                        this.expanded = {};
+                        this.load();
+                    },
+                    setFilter(f) {
+                        if (this.groupFilter === f) return;
+                        this.groupFilter = f;
+                        this.vpage = 1;
+                        this.load();
+                    },
+                    onOrder() {
+                        this.vpage = 1;
+                        this.load();
+                    },
+                    prevV() {
+                        if (this.vpage > 1) {
+                            this.vpage--;
+                            this.load();
+                        }
+                    },
+                    nextV() {
+                        if (this.vpage < this.vmeta.Pages) {
+                            this.vpage++;
+                            this.load();
+                        }
+                    },
+                    async load() {
+                        let url;
+                        if (this.mode === "component") {
+                            if (!this.spurl) return;
+                            url =
+                                "/component?" +
+                                new URLSearchParams({
+                                    spurl: this.spurl,
+                                    vpage: this.vpage,
+                                    vorder: this.vorder,
+                                });
+                        } else {
+                            const coord = this.normalizedCoord();
+                            if (!coord) return;
+                            url =
+                                "/collect?" +
+                                new URLSearchParams({
+                                    purl: coord,
+                                    vpage: this.vpage,
+                                    vorder: this.vorder,
+                                    vfilter: this.groupFilter,
+                                });
+                        }
+                        this.loading = true;
+                        this.error = null;
+                        try {
+                            const r = await fetch(url);
+                            if (!r.ok) {
+                                const e = await r.json().catch(() => ({}));
+                                this.error = e.error || "HTTP " + r.status;
+                                this.result = null;
+                                return;
+                            }
+                            this.result = await r.json();
+                            this.vmeta = this.result.Vuln || this.vmeta;
+                        } catch (e) {
+                            this.error = String(e);
+                            this.result = null;
+                        } finally {
+                            this.loading = false;
+                        }
+                    },
+                    get groups() {
+                        return (this.result && this.result.Groups) || [];
+                    },
+                    toggle(id) {
+                        this.expanded[id] = !this.expanded[id];
+                    },
+                    queriedVersion() {
+                        const c = (this.result && this.result.Coord) || "";
+                        const at = c.lastIndexOf("@");
+                        return at >= 0 ? c.slice(at + 1) : "no version";
+                    },
+                    // "name@version" for the match strip (e.g. axios@1.12.0).
+                    scannedTarget() {
+                        const v = this.queriedVersion();
+                        if (v === "no version") return "no version";
+                        const name =
+                            (this.result &&
+                                this.result.Component &&
+                                this.result.Component.Name) ||
+                            "";
+                        return name ? name + "@" + v : v;
+                    },
+                    compName() {
+                        return (
+                            (this.result &&
+                                this.result.Component &&
+                                this.result.Component.Name) ||
+                            this.spurl
+                        );
+                    },
+                    // Versión a mostrar: la consultada (collect) o la latest (component).
+                    cardVersion() {
+                        const v = this.queriedVersion();
+                        if (v !== "no version") return v;
+                        return (
+                            (this.result &&
+                                this.result.Component &&
+                                this.result.Component.LatestVersion) ||
+                            "—"
+                        );
+                    },
+                    // Ecosystem isn't stored yet — derive it from the purl (pkg:npm/… → npm).
+                    ecosystem() {
+                        const s =
+                            (this.result &&
+                                this.result.Component &&
+                                this.result.Component.SPURL) ||
+                            "";
+                        const m = s.match(/^pkg:([^/]+)\//);
+                        return m ? m[1] : "";
+                    },
+                };
+            }
+
+            function components() {
+                return {
+                    name: "",
+                    ecosystem: "",
+                    page: 1,
+                    limit: 25,
+                    records: [],
+                    total: 0,
+                    loading: false,
+                    error: null,
+                    _t: null,
+                    ecosystems: [
+                        "npm",
+                        "pypi",
+                        "golang",
+                        "cargo",
+                        "gem",
+                        "maven",
+                        "nuget",
+                        "composer",
+                    ],
+                    init() {
+                        this.load();
+                    },
+                    get pages() {
+                        return Math.max(1, Math.ceil(this.total / this.limit));
+                    },
+                    onInput() {
+                        clearTimeout(this._t);
+                        this._t = setTimeout(() => {
+                            this.page = 1;
+                            this.load();
+                        }, 300);
+                    },
+                    onEco() {
+                        this.page = 1;
+                        this.load();
+                    },
+                    prev() {
+                        if (this.page > 1) {
+                            this.page--;
+                            this.load();
+                        }
+                    },
+                    next() {
+                        if (this.page < this.pages) {
+                            this.page++;
+                            this.load();
+                        }
+                    },
+                    async load() {
+                        this.loading = true;
+                        this.error = null;
+                        try {
+                            const r = await fetch(
+                                "/components?" +
+                                    new URLSearchParams({
+                                        name: this.name,
+                                        ecosystem: this.ecosystem,
+                                        page: this.page,
+                                        limit: this.limit,
+                                    }),
+                            );
+                            if (!r.ok) {
+                                const e = await r.json().catch(() => ({}));
+                                this.error = e.error || "HTTP " + r.status;
+                                return;
+                            }
+                            const d = await r.json();
+                            this.records = d.components || [];
+                            this.total = d.total || 0;
+                        } catch (e) {
+                            this.error = String(e);
+                        } finally {
+                            this.loading = false;
+                        }
+                    },
+                };
+            }
+
+            function vulnDetail() {
+                return {
+                    id: "",
+                    cards: [],
+                    loading: false,
+                    error: null,
+                    init() {
+                        this.sync();
+                        window.addEventListener("hashchange", () =>
+                            this.sync(),
+                        );
+                    },
+                    sync() {
+                        const m = location.hash.match(/^#vuln\/(.+)$/);
+                        if (!m) return;
+                        const id = decodeURIComponent(m[1]);
+                        if (id !== this.id) {
+                            this.id = id;
+                            this.load();
+                        }
+                    },
+                    async load() {
+                        this.loading = true;
+                        this.error = null;
+                        this.cards = [];
+                        try {
+                            const r = await fetch(
+                                "/vulnerability?" +
+                                    new URLSearchParams({ id: this.id }),
+                            );
+                            if (!r.ok) {
+                                const e = await r.json().catch(() => ({}));
+                                this.error = e.error || "HTTP " + r.status;
+                                return;
+                            }
+                            const d = await r.json();
+                            this.cards = this.groupCards(d.records || []);
+                        } catch (e) {
+                            this.error = String(e);
+                        } finally {
+                            this.loading = false;
+                        }
+                    },
+                    // Un card por advisory (source + originalID); cada record aporta un paquete afectado.
+                    groupCards(records) {
+                        const map = {},
+                            order = [];
+                        for (const r of records) {
+                            const key = r.Source + "|" + r.OriginalID;
+                            let c = map[key];
+                            if (!c) {
+                                c = {
+                                    source: r.Source,
+                                    originalID: r.OriginalID,
+                                    canonicalID: r.CanonicalID,
+                                    score: r.Score,
+                                    ecosystem: ecoOf(r.AffectedPackage),
+                                    title: recTitle(r),
+                                    published: r.Published,
+                                    updated: r.Modified,
+                                    record: r,
+                                    packages: [],
+                                };
+                                map[key] = c;
+                                order.push(c);
+                            }
+                            c.packages.push({
+                                purl: r.AffectedPackage || "",
+                                open: c.packages.length === 0,
+                                showAll: false,
+                                affected: r.AffectedVersions || [],
+                                ranges: r.AffectedRanges || [],
+                                unaffected: r.UnaffectedVersions || [],
+                                fixed: r.FixedVersions || [],
+                            });
+                        }
+                        return order;
+                    },
+                };
+            }
+
+            function vulns() {
+                return {
+                    id: "",
+                    page: 1,
+                    limit: 24,
+                    records: [],
+                    total: 0,
+                    loading: false,
+                    error: null,
+                    _t: null,
+                    init() {
+                        this.load();
+                    },
+                    get pages() {
+                        return Math.max(1, Math.ceil(this.total / this.limit));
+                    },
+                    onInput() {
+                        clearTimeout(this._t);
+                        this._t = setTimeout(() => {
+                            this.page = 1;
+                            this.load();
+                        }, 300);
+                    },
+                    prev() {
+                        if (this.page > 1) {
+                            this.page--;
+                            this.load();
+                        }
+                    },
+                    next() {
+                        if (this.page < this.pages) {
+                            this.page++;
+                            this.load();
+                        }
+                    },
+                    async load() {
+                        this.loading = true;
+                        this.error = null;
+                        try {
+                            const r = await fetch(
+                                "/vulnerabilities?" +
+                                    new URLSearchParams({
+                                        id: this.id,
+                                        page: this.page,
+                                        limit: this.limit,
+                                    }),
+                            );
+                            if (!r.ok) {
+                                const e = await r.json().catch(() => ({}));
+                                this.error = e.error || "HTTP " + r.status;
+                                return;
+                            }
+                            const d = await r.json();
+                            this.records = d.records || [];
+                            this.total = d.total || 0;
+                        } catch (e) {
+                            this.error = String(e);
+                        } finally {
+                            this.loading = false;
+                        }
+                    },
+                };
+            }
+
+            // cpes() — índice global de CPEs resueltos (espejo de vulns()).
+            function cpes() {
+                return {
+                    search: "",
+                    page: 1,
+                    limit: 24,
+                    records: [],
+                    total: 0,
+                    loading: false,
+                    error: null,
+                    _t: null,
+                    init() {
+                        this.load();
+                    },
+                    // "cpe:2.3:a:axios:axios" → prefix mute + vendor:product en ink.
+                    parts(c) {
+                        const segs = (c.CPE || "").split(":");
+                        return {
+                            prefix: segs.slice(0, 3).join(":"),
+                            vendor: segs[3] || "",
+                            product: segs[4] || "",
+                        };
+                    },
+                    matched(c, dim) {
+                        return (c.MatchedBy || []).includes(dim);
+                    },
+                    nMatched(c) {
+                        return (c.MatchedBy || []).length;
+                    },
+                    get pages() {
+                        return Math.max(1, Math.ceil(this.total / this.limit));
+                    },
+                    onInput() {
+                        clearTimeout(this._t);
+                        this._t = setTimeout(() => {
+                            this.page = 1;
+                            this.load();
+                        }, 300);
+                    },
+                    prev() {
+                        if (this.page > 1) {
+                            this.page--;
+                            this.load();
+                        }
+                    },
+                    next() {
+                        if (this.page < this.pages) {
+                            this.page++;
+                            this.load();
+                        }
+                    },
+                    async load() {
+                        this.loading = true;
+                        this.error = null;
+                        try {
+                            const r = await fetch(
+                                "/cpes?" +
+                                    new URLSearchParams({
+                                        search: this.search,
+                                        page: this.page,
+                                        limit: this.limit,
+                                    }),
+                            );
+                            if (!r.ok) {
+                                const e = await r.json().catch(() => ({}));
+                                this.error = e.error || "HTTP " + r.status;
+                                return;
+                            }
+                            const d = await r.json();
+                            this.records = d.cpes || [];
+                            this.total = d.total || 0;
+                        } catch (e) {
+                            this.error = String(e);
+                        } finally {
+                            this.loading = false;
+                        }
+                    },
+                };
+            }
+        </script>
+    </head>
+    <body x-data="router()" @hashchange.window="sync()">
+        <nav class="nav">
+            <div class="nav-left">
+                <span class="nav-brand">
+                    <img
+                        class="nav-logo"
+                        src="/static/icon-512.png"
+                        alt=""
+                    />magpie
+                </span>
+                <div class="nav-links">
+                    <a
+                        class="nav-link"
+                        :class="{active: view==='collect'}"
+                        href="#collect"
+                        @click.prevent="go('collect')"
+                        >Collect</a
+                    >
+                    <a
+                        class="nav-link"
+                        :class="{active: view==='components'}"
+                        href="#components"
+                        @click.prevent="go('components')"
+                        >Components</a
+                    >
+                    <a
+                        class="nav-link"
+                        :class="{active: view==='vulns'}"
+                        href="#vulns"
+                        @click.prevent="go('vulns')"
+                        >Vulnerabilities</a
+                    >
+                    <a
+                        class="nav-link"
+                        :class="{active: view==='cpes'}"
+                        href="#cpes"
+                        @click.prevent="go('cpes')"
+                        >CPEs</a
+                    >
+                </div>
+            </div>
+        </nav>
+
+        <!-- x-for keyed por view: recrea el componente al cambiar collect↔component
+       (lifecycle fresco, sin estado compartido). -->
+        <template
+            x-for="bv in ((view==='collect' || view==='component') ? [view] : [])"
+            :key="bv"
+        >
+            <main class="container bundle-main" x-data="bundleView(bv)">
+                <template x-if="mode==='collect'">
+                    <section class="section">
+                        <h1 class="hero">Magpie — SCA scavenger</h1>
+                        <p class="hero-sub">
+                            Paste a purl or spurl to scavenge metadata, repo,
+                            and vulnerabilities.
+                        </p>
+
+                        <div class="form form-hero">
+                            <div class="coord-field">
+                                <span class="coord-prefix">pkg:</span>
+                                <input
+                                    class="coord-input"
+                                    x-model="coord"
+                                    placeholder="npm/chalk@5.0.0"
+                                    @keydown.enter="run()"
+                                />
+                            </div>
+                            <button
+                                class="btn-primary"
+                                @click="run()"
+                                :disabled="loading"
+                                x-text="loading ? 'Collecting…' : 'Collect'"
+                            ></button>
+                        </div>
+                    </section>
+                </template>
+
+                <template x-if="mode==='component'">
+                    <section class="section">
+                        <div class="crumb">
+                            component / <b x-text="compName()"></b>
+                        </div>
+                        <div class="ph">
+                            <div>
+                                <div class="ph-title" x-text="compName()"></div>
+                                <div class="ph-target" x-text="spurl"></div>
+                            </div>
+                            <a
+                                class="nav-link"
+                                href="#components"
+                                @click.prevent="go('components')"
+                                >‹ back</a
+                            >
+                        </div>
+                    </section>
+                </template>
+
+                <template x-if="error">
+                    <section class="section card card-strong">
+                        <div class="errors-title">Couldn't load</div>
+                        <div class="error-item" x-text="error"></div>
+                    </section>
+                </template>
+
+                <template x-if="result">
+                    <section class="section stack">
+                        <template x-if="result.Component">
+                            <div class="pkg">
+                                <div class="pkg-head">
+                                    <span class="pkg-icon">
+                                        <img
+                                            x-show="result.Component.Icon"
+                                            :src="result.Component.Icon"
+                                            alt=""
+                                        />
+                                        <svg
+                                            x-show="!result.Component.Icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="m7.5 4.27 9 5.15" />
+                                            <path
+                                                d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"
+                                            />
+                                            <path d="m3.3 7 8.7 5 8.7-5" />
+                                            <path d="M12 22V12" />
+                                        </svg>
+                                    </span>
+                                    <div class="pkg-id">
+                                        <div
+                                            class="pkg-name"
+                                            x-text="result.Component.Name"
+                                        ></div>
+                                        <div
+                                            class="pkg-coord"
+                                            x-text="result.Coord || result.Component.SPURL"
+                                        ></div>
+                                    </div>
+                                    <a
+                                        class="pkg-repo-link"
+                                        x-show="result.Component.RepoURL"
+                                        :href="result.Component.RepoURL"
+                                        target="_blank"
+                                        rel="noopener"
+                                    >
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="currentColor"
+                                            aria-hidden="true"
+                                        >
+                                            <path
+                                                d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
+                                            />
+                                        </svg>
+                                        Repository
+                                    </a>
+                                </div>
+
+                                <div class="pkg-meta">
+                                    <div class="pkg-field">
+                                        <div
+                                            class="pkg-flabel"
+                                            x-text="mode==='component' ? 'Latest version' : 'Latest version'"
+                                        ></div>
+                                        <div
+                                            class="pkg-fval mono"
+                                            x-text="cardVersion()"
+                                        ></div>
+                                    </div>
+                                    <div class="pkg-field">
+                                        <div class="pkg-flabel">Ecosystem</div>
+                                        <div class="pkg-fval">
+                                            <span
+                                                class="pkg-eco"
+                                                x-show="ecosystem()"
+                                                x-text="ecosystem()"
+                                            ></span>
+                                            <span
+                                                class="pkg-muted"
+                                                x-show="!ecosystem()"
+                                                >—</span
+                                            >
+                                        </div>
+                                    </div>
+                                    <div class="pkg-field">
+                                        <div class="pkg-flabel">License</div>
+                                        <div
+                                            class="pkg-fval"
+                                            x-text="(result.Component.Licenses && result.Component.Licenses.length) ? result.Component.Licenses.join(', ') : '—'"
+                                        ></div>
+                                    </div>
+                                    <div class="pkg-field">
+                                        <div class="pkg-flabel">CPE</div>
+                                        <div class="pkg-fval">
+                                            <span
+                                                class="pkg-cpe-list"
+                                                x-show="result.CPEs && result.CPEs.length"
+                                            >
+                                                <template
+                                                    x-for="(c, i) in (result.CPEs||[])"
+                                                    :key="i"
+                                                >
+                                                    <span
+                                                        class="pkg-cpe"
+                                                        :title="c.Explanation || ''"
+                                                        x-text="c.CPE"
+                                                    ></span>
+                                                </template>
+                                            </span>
+                                            <span
+                                                class="pkg-cpe-empty"
+                                                x-show="!result.CPEs || !result.CPEs.length"
+                                            >
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    aria-hidden="true"
+                                                >
+                                                    <circle
+                                                        cx="12"
+                                                        cy="12"
+                                                        r="10"
+                                                    />
+                                                    <polyline
+                                                        points="12 6 12 12 16 14"
+                                                    />
+                                                </svg>
+                                                not available yet
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <template x-if="result.Repository">
+                                    <div class="pkg-repo">
+                                        <div class="pkg-repo-label">
+                                            <svg
+                                                viewBox="0 0 24 24"
+                                                fill="currentColor"
+                                                aria-hidden="true"
+                                            >
+                                                <path
+                                                    d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
+                                                />
+                                            </svg>
+                                            Repository
+                                        </div>
+                                        <div class="pkg-repo-stats">
+                                            <span class="pkg-stat">
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    aria-hidden="true"
+                                                >
+                                                    <polygon
+                                                        points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+                                                    />
+                                                </svg>
+                                                <b
+                                                    x-text="result.Repository.Stars.toLocaleString()"
+                                                ></b>
+                                                stars
+                                            </span>
+                                            <span class="pkg-stat">
+                                                <svg
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    aria-hidden="true"
+                                                >
+                                                    <circle
+                                                        cx="12"
+                                                        cy="18"
+                                                        r="3"
+                                                    />
+                                                    <circle
+                                                        cx="6"
+                                                        cy="6"
+                                                        r="3"
+                                                    />
+                                                    <circle
+                                                        cx="18"
+                                                        cy="6"
+                                                        r="3"
+                                                    />
+                                                    <path
+                                                        d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"
+                                                    />
+                                                    <path d="M12 12v3" />
+                                                </svg>
+                                                <b
+                                                    x-text="result.Repository.Forks.toLocaleString()"
+                                                ></b>
+                                                forks
+                                            </span>
+                                            <span
+                                                class="pkg-stat"
+                                                x-show="result.Repository.Language"
+                                            >
+                                                <span
+                                                    class="pkg-lang-dot"
+                                                ></span>
+                                                <span
+                                                    x-text="result.Repository.Language"
+                                                ></span>
+                                            </span>
+                                        </div>
+                                        <div
+                                            class="pkg-repo-dates"
+                                            x-show="!vcEmptyDate(result.Repository.LastPush) || !vcEmptyDate(result.Repository.LastRelease)"
+                                        >
+                                            <div
+                                                class="pkg-date"
+                                                x-show="!vcEmptyDate(result.Repository.LastPush)"
+                                            >
+                                                <div class="pkg-dlabel">
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="2"
+                                                        stroke-linecap="round"
+                                                        stroke-linejoin="round"
+                                                        aria-hidden="true"
+                                                    >
+                                                        <circle
+                                                            cx="12"
+                                                            cy="12"
+                                                            r="3"
+                                                        />
+                                                        <line
+                                                            x1="3"
+                                                            x2="9"
+                                                            y1="12"
+                                                            y2="12"
+                                                        />
+                                                        <line
+                                                            x1="15"
+                                                            x2="21"
+                                                            y1="12"
+                                                            y2="12"
+                                                        />
+                                                    </svg>
+                                                    Last push
+                                                </div>
+                                                <div
+                                                    class="pkg-dval"
+                                                    x-text="vcFmtDate(result.Repository.LastPush)"
+                                                ></div>
+                                                <div
+                                                    class="pkg-drel"
+                                                    x-show="vcRel(result.Repository.LastPush)"
+                                                    x-text="'(' + vcRel(result.Repository.LastPush) + ')'"
+                                                ></div>
+                                            </div>
+                                            <div
+                                                class="pkg-date"
+                                                x-show="!vcEmptyDate(result.Repository.LastRelease)"
+                                            >
+                                                <div class="pkg-dlabel">
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="2"
+                                                        stroke-linecap="round"
+                                                        stroke-linejoin="round"
+                                                        aria-hidden="true"
+                                                    >
+                                                        <path
+                                                            d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"
+                                                        />
+                                                        <circle
+                                                            cx="7.5"
+                                                            cy="7.5"
+                                                            r=".5"
+                                                            fill="currentColor"
+                                                        />
+                                                    </svg>
+                                                    Last release
+                                                </div>
+                                                <div
+                                                    class="pkg-dval"
+                                                    x-text="vcFmtDate(result.Repository.LastRelease)"
+                                                ></div>
+                                                <div
+                                                    class="pkg-drel"
+                                                    x-show="vcRel(result.Repository.LastRelease)"
+                                                    x-text="'(' + vcRel(result.Repository.LastRelease) + ')'"
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <template x-if="result.Errors && result.Errors.length">
+                            <div class="card card-strong">
+                                <div class="errors-title">Source errors</div>
+                                <template
+                                    x-for="(e, i) in result.Errors"
+                                    :key="i"
+                                >
+                                    <div class="error-item">
+                                        <span x-text="e.Source"></span> (<span
+                                            x-text="e.Kind"
+                                        ></span
+                                        >): <span x-text="e.Message"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <div class="vuln-head">
+                            <div class="vuln-section-title">
+                                Vulnerabilities
+                            </div>
+                            <div class="vuln-controls" x-show="vmeta.All">
+                                <select
+                                    class="select-pill"
+                                    x-model="vorder"
+                                    @change="onOrder()"
+                                >
+                                    <option value="severity">Severity</option>
+                                    <option value="recent">Recent</option>
+                                </select>
+                                <div class="pager" x-show="vmeta.Pages>1">
+                                    <button
+                                        class="page-btn"
+                                        @click="prevV()"
+                                        :disabled="vpage<=1"
+                                    >
+                                        ‹
+                                    </button>
+                                    <span
+                                        x-text="vpage + ' / ' + vmeta.Pages"
+                                    ></span>
+                                    <button
+                                        class="page-btn"
+                                        @click="nextV()"
+                                        :disabled="vpage>=vmeta.Pages"
+                                    >
+                                        ›
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div
+                            class="tabs"
+                            style="margin-left: 0"
+                            x-show="mode==='collect' && vmeta.All"
+                        >
+                            <button
+                                :class="groupFilter==='affected'?'btn-primary':'btn-secondary'"
+                                @click="setFilter('affected')"
+                                x-text="'Affected (' + vmeta.Affected + ')'"
+                            ></button>
+                            <button
+                                :class="groupFilter==='all'?'btn-primary':'btn-secondary'"
+                                @click="setFilter('all')"
+                                x-text="'All (' + vmeta.All + ')'"
+                            ></button>
+                        </div>
+
+                        <template x-if="!groups.length">
+                            <p class="vuln-empty-inline">
+                                No vulnerabilities found
+                            </p>
+                        </template>
+
+                        <template
+                            x-for="(g, gi) in groups"
+                            :key="g.CanonicalID"
+                        >
+                            <div
+                                class="vc-card"
+                                :class="{ 'is-open': expanded[g.CanonicalID], 'is-unaffected': !g.Affected }"
+                            >
+                                <button
+                                    class="vc-head"
+                                    @click="toggle(g.CanonicalID)"
+                                    :aria-expanded="!!expanded[g.CanonicalID]"
+                                >
+                                    <span
+                                        class="vc-canonical vc-open"
+                                        @click.stop="location.hash='vuln/'+encodeURIComponent(g.CanonicalID)"
+                                        title="Open vulnerability"
+                                    >
+                                        <span x-text="g.CanonicalID"></span>
+                                        <svg
+                                            class="open-ico"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="M7 7h10v10" />
+                                            <path d="M7 17 17 7" />
+                                        </svg>
+                                    </span>
+                                    <span class="vc-head-right">
+                                        <template x-if="g.Affected">
+                                            <span
+                                                class="svc-score"
+                                                :class="'sev-' + svcBucket(g.MaxScore)"
+                                            >
+                                                <span class="svc-score-type"
+                                                    >CVSS</span
+                                                >
+                                                <span class="svc-score-sep"
+                                                    >·</span
+                                                >
+                                                <span
+                                                    class="svc-score-val"
+                                                    x-text="Number(g.MaxScore).toFixed(1)"
+                                                ></span>
+                                                <span class="svc-score-sep"
+                                                    >·</span
+                                                >
+                                                <span
+                                                    class="svc-score-bucket"
+                                                    x-text="vcLabel(g.MaxScore)"
+                                                ></span>
+                                            </span>
+                                        </template>
+                                        <span x-show="!g.Affected" class="vc-na"
+                                            >not affected</span
+                                        >
+                                        <span
+                                            class="vc-tag vc-tag-new"
+                                            x-show="isNew(g)"
+                                            >NEW</span
+                                        >
+                                        <span
+                                            class="vc-tag vc-tag-upd"
+                                            x-show="isUpdated(g)"
+                                            >UPDATED</span
+                                        >
+                                        <span class="vc-count">
+                                            <span
+                                                x-text="(g.Members ? g.Members.length : 0) + (g.Members && g.Members.length === 1 ? ' source' : ' sources')"
+                                            ></span>
+                                            <span
+                                                class="vc-chev"
+                                                :class="{ open: expanded[g.CanonicalID] }"
+                                                >▶</span
+                                            >
+                                        </span>
+                                    </span>
+                                </button>
+
+                                <div
+                                    class="vc-children"
+                                    x-show="expanded[g.CanonicalID]"
+                                >
+                                    <template
+                                        x-for="(m, mi) in (g.Members || [])"
+                                        :key="mi"
+                                    >
+                                        <div class="vc-child">
+                                            <div class="vc-child-main">
+                                                <div class="vc-child-pills">
+                                                    <span class="vc-id">
+                                                        <span
+                                                            x-text="m.Record.OriginalID"
+                                                        ></span>
+                                                        <span
+                                                            class="vc-src"
+                                                            x-text="'(' + m.Record.Source + ')'"
+                                                        ></span>
+                                                    </span>
+                                                    <span
+                                                        class="svc-score"
+                                                        x-show="m.Record.Score > 0"
+                                                        :class="'sev-' + svcBucket(m.Record.Score)"
+                                                    >
+                                                        <span
+                                                            class="svc-score-type"
+                                                            >CVSS</span
+                                                        >
+                                                        <span
+                                                            class="svc-score-sep"
+                                                            >·</span
+                                                        >
+                                                        <span
+                                                            class="svc-score-val"
+                                                            x-text="Number(m.Record.Score).toFixed(1)"
+                                                        ></span>
+                                                        <span
+                                                            class="svc-score-sep"
+                                                            >·</span
+                                                        >
+                                                        <span
+                                                            class="svc-score-bucket"
+                                                            x-text="vcLabel(m.Record.Score)"
+                                                        ></span>
+                                                    </span>
+                                                </div>
+
+                                                <div
+                                                    class="vc-desc"
+                                                    x-show="recTitle(m.Record)"
+                                                    x-text="recTitle(m.Record)"
+                                                ></div>
+
+                                                <div
+                                                    class="vc-match"
+                                                    x-show="mode==='collect'"
+                                                    :class="m.Verdict.Matched ? 'is-match' : 'no-match'"
+                                                >
+                                                    <span class="vc-dot"></span>
+                                                    <span
+                                                        class="vc-ver"
+                                                        x-text="scannedTarget()"
+                                                    ></span>
+                                                    <span
+                                                        class="vc-reason"
+                                                        x-show="m.Verdict.Reason"
+                                                        x-text="m.Verdict.Reason.replace(/_/g, ' ')"
+                                                    ></span>
+                                                    <span
+                                                        class="vc-range"
+                                                        x-show="m.Verdict.Range"
+                                                        x-text="m.Verdict.Range"
+                                                    ></span>
+                                                    <span
+                                                        class="vc-fix"
+                                                        x-show="m.Verdict.Matched && m.Verdict.NextFix"
+                                                        x-text="'→ fixed in ' + m.Verdict.NextFix"
+                                                    ></span>
+                                                </div>
+                                            </div>
+
+                                            <div class="vc-child-side">
+                                                <div class="vc-dates">
+                                                    <div>
+                                                        <span class="vc-dlabel"
+                                                            >Published</span
+                                                        >
+                                                        <span
+                                                            x-text="vcFmtDate(m.Record.Published)"
+                                                        ></span>
+                                                        <span
+                                                            class="vc-rel"
+                                                            x-show="vcRel(m.Record.Published)"
+                                                            x-text="'(' + vcRel(m.Record.Published) + ')'"
+                                                        ></span>
+                                                    </div>
+                                                    <div>
+                                                        <span class="vc-dlabel"
+                                                            >Updated</span
+                                                        >
+                                                        <span
+                                                            x-text="vcFmtDate(m.Record.Modified)"
+                                                        ></span>
+                                                        <span
+                                                            class="vc-rel"
+                                                            x-show="vcRel(m.Record.Modified)"
+                                                            x-text="'(' + vcRel(m.Record.Modified) + ')'"
+                                                        ></span>
+                                                    </div>
+                                                </div>
+                                                <div class="vc-child-links">
+                                                    <a
+                                                        class="svc-link"
+                                                        x-show="githubURL(m.Record)"
+                                                        :href="githubURL(m.Record)"
+                                                        target="_blank"
+                                                        rel="noopener"
+                                                    >
+                                                        <svg
+                                                            viewBox="0 0 24 24"
+                                                            fill="currentColor"
+                                                            aria-hidden="true"
+                                                        >
+                                                            <path
+                                                                d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
+                                                            />
+                                                        </svg>
+                                                        GitHub advisory
+                                                    </a>
+                                                    <a
+                                                        class="svc-link"
+                                                        x-show="m.Record.Source==='osv'"
+                                                        :href="osvURL(m.Record)"
+                                                        target="_blank"
+                                                        rel="noopener"
+                                                    >
+                                                        <svg
+                                                            viewBox="0 0 24 24"
+                                                            fill="none"
+                                                            stroke="currentColor"
+                                                            stroke-width="2"
+                                                            stroke-linecap="round"
+                                                            stroke-linejoin="round"
+                                                            aria-hidden="true"
+                                                        >
+                                                            <path
+                                                                d="M15 3h6v6"
+                                                            />
+                                                            <path
+                                                                d="M10 14 21 3"
+                                                            />
+                                                            <path
+                                                                d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+                                                            />
+                                                        </svg>
+                                                        OSV
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </section>
+                </template>
+            </main>
+        </template>
+
+        <main
+            class="container"
+            x-data="vulns()"
+            x-show="view==='vulns'"
+            x-cloak
+        >
+            <section class="section">
+                <!-- Filter bar: compact search left, result count + pager right (above the data). -->
+                <div class="filter-bar">
+                    <div class="filter-left">
+                        <input
+                            class="search-input"
+                            x-model="id"
+                            @input="onInput()"
+                            placeholder="GHSA / CVE / PYSEC…"
+                        />
+                    </div>
+                    <div class="pager" x-show="!error && total > 0">
+                        <span
+                            x-text="total + (total === 1 ? ' result' : ' results')"
+                        ></span>
+                        <button
+                            class="page-btn"
+                            @click="prev()"
+                            :disabled="page<=1"
+                        >
+                            ‹
+                        </button>
+                        <span x-text="page + ' / ' + pages"></span>
+                        <button
+                            class="page-btn"
+                            @click="next()"
+                            :disabled="page>=pages"
+                        >
+                            ›
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <template x-if="error">
+                <section class="section card card-strong">
+                    <div class="errors-title">
+                        Couldn't load vulnerabilities
+                    </div>
+                    <div class="error-item" x-text="error"></div>
+                </section>
+            </template>
+
+            <template x-if="!error && !records.length">
+                <p class="vuln-empty">No vulnerabilities found</p>
+            </template>
+
+            <template x-if="!error && records.length">
+                <section class="section">
+                    <div class="vuln-list">
+                        <template x-for="(v, i) in records" :key="i">
+                            <div
+                                class="svc svc-clickable"
+                                @click="location.hash='vuln/'+encodeURIComponent(v.CanonicalID||v.OriginalID)"
+                            >
+                                <div class="svc-top">
+                                    <div class="svc-title-wrap">
+                                        <span
+                                            class="svc-canonical"
+                                            x-text="v.OriginalID"
+                                        ></span>
+                                        <span
+                                            class="svc-paren"
+                                            x-show="v.CanonicalID && v.CanonicalID !== v.OriginalID"
+                                            x-text="'(' + v.CanonicalID + ')'"
+                                        ></span>
+                                    </div>
+                                    <div class="svc-scores">
+                                        <span
+                                            class="svc-score"
+                                            :class="'sev-' + svcBucket(v.Score)"
+                                        >
+                                            <span class="svc-score-type"
+                                                >CVSS</span
+                                            >
+                                            <span class="svc-score-sep">·</span>
+                                            <span
+                                                class="svc-score-val"
+                                                x-text="v.Score > 0 ? Number(v.Score).toFixed(1) : 'n/a'"
+                                            ></span>
+                                            <span class="svc-score-sep">·</span>
+                                            <span
+                                                class="svc-score-bucket"
+                                                x-text="vcLabel(v.Score)"
+                                            ></span>
+                                        </span>
+                                        <span
+                                            class="svc-src-pill"
+                                            x-show="v.Source"
+                                            x-text="v.Source"
+                                        ></span>
+                                    </div>
+                                </div>
+
+                                <div class="svc-links">
+                                    <a
+                                        class="svc-link"
+                                        x-show="githubURL(v)"
+                                        :href="githubURL(v)"
+                                        @click.stop
+                                        target="_blank"
+                                        rel="noopener"
+                                    >
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="currentColor"
+                                            aria-hidden="true"
+                                        >
+                                            <path
+                                                d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
+                                            />
+                                        </svg>
+                                        GitHub advisory
+                                    </a>
+                                    <a
+                                        class="svc-link"
+                                        x-show="v.Source==='osv'"
+                                        :href="osvURL(v)"
+                                        @click.stop
+                                        target="_blank"
+                                        rel="noopener"
+                                    >
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="M15 3h6v6" />
+                                            <path d="M10 14 21 3" />
+                                            <path
+                                                d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+                                            />
+                                        </svg>
+                                        OSV
+                                    </a>
+                                </div>
+
+                                <div class="svc-dates">
+                                    <span>
+                                        <span class="svc-dlabel"
+                                            >Published</span
+                                        >
+                                        <span
+                                            x-text="vcFmtDate(v.Published)"
+                                        ></span>
+                                        <span
+                                            class="svc-rel"
+                                            x-show="vcRel(v.Published)"
+                                            x-text="'(' + vcRel(v.Published) + ')'"
+                                        ></span>
+                                    </span>
+                                    <span
+                                        class="svc-ddot"
+                                        x-show="!vcEmptyDate(v.Modified)"
+                                        >·</span
+                                    >
+                                    <span x-show="!vcEmptyDate(v.Modified)">
+                                        <span class="svc-dlabel">Updated</span>
+                                        <span
+                                            x-text="vcFmtDate(v.Modified)"
+                                        ></span>
+                                        <span
+                                            class="svc-rel"
+                                            x-show="vcRel(v.Modified)"
+                                            x-text="'(' + vcRel(v.Modified) + ')'"
+                                        ></span>
+                                    </span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </section>
+            </template>
+        </main>
+
+        <main
+            class="container"
+            x-data="components()"
+            x-show="view==='components'"
+            x-cloak
+        >
+            <section class="section">
+                <!-- Filter bar: name search + ecosystem select left, result count + pager right. -->
+                <div class="filter-bar">
+                    <div class="filter-left">
+                        <input
+                            class="search-input"
+                            x-model="name"
+                            @input="onInput()"
+                            placeholder="axios, lodash…"
+                        />
+                        <select
+                            class="select-pill"
+                            x-model="ecosystem"
+                            @change="onEco()"
+                        >
+                            <option value="">all ecosystems</option>
+                            <template x-for="e in ecosystems" :key="e">
+                                <option :value="e" x-text="e"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="pager" x-show="!error && total > 0">
+                        <span
+                            x-text="total + (total === 1 ? ' result' : ' results')"
+                        ></span>
+                        <button
+                            class="page-btn"
+                            @click="prev()"
+                            :disabled="page<=1"
+                        >
+                            ‹
+                        </button>
+                        <span x-text="page + ' / ' + pages"></span>
+                        <button
+                            class="page-btn"
+                            @click="next()"
+                            :disabled="page>=pages"
+                        >
+                            ›
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <template x-if="error">
+                <section class="section card card-strong">
+                    <div class="errors-title">Couldn't load components</div>
+                    <div class="error-item" x-text="error"></div>
+                </section>
+            </template>
+
+            <template x-if="!error && !records.length">
+                <p class="vuln-empty">No components found</p>
+            </template>
+
+            <template x-if="!error && records.length">
+                <section class="section">
+                    <div class="cmp-grid">
+                        <template x-for="(c, i) in records" :key="c.SPURL">
+                            <div
+                                class="cmp cmp-clickable"
+                                @click="location.hash='component/'+encodeURIComponent(c.SPURL)"
+                            >
+                                <div class="cmp-row">
+                                    <span class="cmp-icon">
+                                        <img
+                                            x-show="c.Icon"
+                                            :src="c.Icon"
+                                            alt=""
+                                        />
+                                        <svg
+                                            x-show="!c.Icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="m7.5 4.27 9 5.15" />
+                                            <path
+                                                d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"
+                                            />
+                                            <path d="m3.3 7 8.7 5 8.7-5" />
+                                            <path d="M12 22V12" />
+                                        </svg>
+                                    </span>
+                                    <a
+                                        class="cmp-repo"
+                                        x-show="c.RepoURL"
+                                        :href="c.RepoURL"
+                                        @click.stop
+                                        target="_blank"
+                                        rel="noopener"
+                                        aria-label="repository"
+                                    >
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="currentColor"
+                                            aria-hidden="true"
+                                        >
+                                            <path
+                                                d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
+                                            />
+                                        </svg>
+                                    </a>
+                                </div>
+                                <div class="cmp-body">
+                                    <div class="cmp-name" x-text="c.Name"></div>
+                                    <div
+                                        class="cmp-ver"
+                                        x-show="c.SPURL"
+                                        x-text="c.SPURL"
+                                    ></div>
+                                </div>
+                                <span
+                                    class="cmp-eco"
+                                    x-show="ecoOf(c.SPURL)"
+                                    x-text="ecoOf(c.SPURL)"
+                                ></span>
+                            </div>
+                        </template>
+                    </div>
+                </section>
+            </template>
+        </main>
+
+        <main
+            class="container"
+            x-data="vulnDetail()"
+            x-show="view==='vuln'"
+            x-cloak
+        >
+            <section class="section">
+                <div class="crumb">vuln / <b x-text="id"></b></div>
+                <div class="ph">
+                    <div>
+                        <div class="ph-title" x-text="id"></div>
+                        <div
+                            class="ph-target"
+                            x-text="cards.length + (cards.length===1 ? ' source advisory' : ' source advisories')"
+                        ></div>
+                    </div>
+                    <a
+                        class="nav-link"
+                        href="#vulns"
+                        @click.prevent="go('vulns')"
+                        >‹ back</a
+                    >
+                </div>
+            </section>
+
+            <template x-if="error">
+                <section class="section card card-strong">
+                    <div class="errors-title">Couldn't load vulnerability</div>
+                    <div class="error-item" x-text="error"></div>
+                </section>
+            </template>
+
+            <template x-if="!error && !loading && !cards.length">
+                <p class="vuln-empty">Vulnerability not found</p>
+            </template>
+
+            <section class="section evc-list">
+                <template x-for="(c, ci) in cards" :key="ci">
+                    <article class="evc">
+                        <header class="evc-head">
+                            <div class="evc-title-wrap">
+                                <h2
+                                    class="evc-title"
+                                    x-text="c.originalID"
+                                ></h2>
+                                <span
+                                    class="evc-canonical"
+                                    x-show="c.canonicalID && c.canonicalID!==c.originalID"
+                                    x-text="'(' + c.canonicalID + ')'"
+                                ></span>
+                            </div>
+                            <div class="evc-pills">
+                                <span
+                                    class="svc-score"
+                                    :class="'sev-' + svcBucket(c.score)"
+                                >
+                                    <span class="svc-score-type">CVSS</span>
+                                    <span class="svc-score-sep">·</span>
+                                    <span
+                                        class="svc-score-val"
+                                        x-text="c.score > 0 ? Number(c.score).toFixed(1) : 'n/a'"
+                                    ></span>
+                                    <span class="svc-score-sep">·</span>
+                                    <span
+                                        class="svc-score-bucket"
+                                        x-text="vcLabel(c.score)"
+                                    ></span>
+                                </span>
+                                <span
+                                    class="evc-eco"
+                                    x-show="c.ecosystem"
+                                    x-text="c.ecosystem"
+                                ></span>
+                                <span
+                                    class="svc-src-pill"
+                                    x-text="c.source"
+                                ></span>
+                            </div>
+                        </header>
+
+                        <div class="evc-links">
+                            <a
+                                class="evc-link"
+                                x-show="githubURL(c.record)"
+                                :href="githubURL(c.record)"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                    aria-hidden="true"
+                                >
+                                    <path
+                                        d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
+                                    />
+                                </svg>
+                                GitHub advisory
+                            </a>
+                            <a
+                                class="evc-link"
+                                x-show="c.source==='osv'"
+                                :href="osvURL(c.record)"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    aria-hidden="true"
+                                >
+                                    <path d="M15 3h6v6" />
+                                    <path d="M10 14 21 3" />
+                                    <path
+                                        d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+                                    />
+                                </svg>
+                                OSV
+                            </a>
+                        </div>
+
+                        <p
+                            class="evc-desc"
+                            x-show="c.title"
+                            x-text="c.title"
+                        ></p>
+
+                        <div class="evc-dates">
+                            <span
+                                ><span class="evc-dlabel">Published</span>
+                                <span x-text="vcFmtDate(c.published)"></span>
+                                <span
+                                    class="evc-rel"
+                                    x-show="vcRel(c.published)"
+                                    x-text="'(' + vcRel(c.published) + ')'"
+                                ></span
+                            ></span>
+                            <span
+                                class="evc-dot"
+                                x-show="!vcEmptyDate(c.updated)"
+                                >·</span
+                            >
+                            <span x-show="!vcEmptyDate(c.updated)"
+                                ><span class="evc-dlabel">Updated</span>
+                                <span x-text="vcFmtDate(c.updated)"></span>
+                                <span
+                                    class="evc-rel"
+                                    x-show="vcRel(c.updated)"
+                                    x-text="'(' + vcRel(c.updated) + ')'"
+                                ></span
+                            ></span>
+                        </div>
+
+                        <div class="evc-affected">
+                            <div class="evc-affected-label">
+                                Affected packages
+                                <span
+                                    class="evc-count"
+                                    x-text="c.packages.length"
+                                ></span>
+                            </div>
+                            <div class="evc-pkg-list">
+                                <template
+                                    x-for="(pkg, pi) in c.packages"
+                                    :key="pi"
+                                >
+                                    <div
+                                        class="evc-pkg collapse"
+                                        :class="{ open: pkg.open }"
+                                    >
+                                        <div
+                                            class="evc-pkg-head collapse-header"
+                                            @click="pkg.open=!pkg.open"
+                                        >
+                                            <span class="collapse-chevron"
+                                                >▶</span
+                                            >
+                                            <span
+                                                class="evc-purl vc-open"
+                                                x-show="pkg.purl"
+                                                @click.stop="location.hash='component/'+encodeURIComponent(pkg.purl)"
+                                                title="Open component"
+                                            >
+                                                <span x-text="pkg.purl"></span>
+                                                <svg
+                                                    class="open-ico"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    aria-hidden="true"
+                                                >
+                                                    <path d="M7 7h10v10" />
+                                                    <path d="M7 17 17 7" />
+                                                </svg>
+                                            </span>
+                                            <span
+                                                class="evc-purl"
+                                                x-show="!pkg.purl"
+                                                >(unknown package)</span
+                                            >
+                                            <span
+                                                class="evc-pkg-fix"
+                                                x-show="pkg.fixed.length"
+                                                x-text="'fixed in ' + pkg.fixed[0]"
+                                            ></span>
+                                        </div>
+                                        <div class="collapse-body">
+                                            <dl class="evc-kv">
+                                                <div class="evc-kv-row">
+                                                    <dt>Affected ranges</dt>
+                                                    <dd>
+                                                        <span class="evc-chips">
+                                                            <template
+                                                                x-for="(r, ri) in pkg.ranges"
+                                                                :key="ri"
+                                                                ><span
+                                                                    class="evc-range"
+                                                                    x-text="r"
+                                                                ></span
+                                                            ></template>
+                                                            <span
+                                                                class="evc-empty"
+                                                                x-show="!pkg.ranges.length"
+                                                                >—</span
+                                                            >
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="evc-kv-row">
+                                                    <dt>Fixed</dt>
+                                                    <dd>
+                                                        <span class="evc-chips">
+                                                            <template
+                                                                x-for="(v, vi) in pkg.fixed"
+                                                                :key="vi"
+                                                                ><span
+                                                                    class="evc-ver"
+                                                                    x-text="v"
+                                                                ></span
+                                                            ></template>
+                                                            <span
+                                                                class="evc-empty"
+                                                                x-show="!pkg.fixed.length"
+                                                                >—</span
+                                                            >
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="evc-kv-row">
+                                                    <dt>Affected</dt>
+                                                    <dd>
+                                                        <span class="evc-chips">
+                                                            <template
+                                                                x-for="(v, vi) in (pkg.showAll ? pkg.affected : pkg.affected.slice(0,12))"
+                                                                :key="vi"
+                                                                ><span
+                                                                    class="evc-ver"
+                                                                    x-text="v"
+                                                                ></span
+                                                            ></template>
+                                                            <button
+                                                                class="evc-more"
+                                                                x-show="!pkg.showAll && pkg.affected.length>12"
+                                                                @click="pkg.showAll=true"
+                                                                x-text="'+' + (pkg.affected.length-12) + ' more'"
+                                                            ></button>
+                                                            <span
+                                                                class="evc-empty"
+                                                                x-show="!pkg.affected.length"
+                                                                >—</span
+                                                            >
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="evc-kv-row">
+                                                    <dt>Unaffected</dt>
+                                                    <dd>
+                                                        <span class="evc-chips">
+                                                            <template
+                                                                x-for="(v, vi) in (pkg.showAll ? pkg.unaffected : pkg.unaffected.slice(0,12))"
+                                                                :key="vi"
+                                                                ><span
+                                                                    class="evc-ver"
+                                                                    x-text="v"
+                                                                ></span
+                                                            ></template>
+                                                            <span
+                                                                class="evc-empty"
+                                                                x-show="!pkg.unaffected.length"
+                                                                >—</span
+                                                            >
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </article>
+                </template>
+            </section>
+        </main>
+
+        <main
+            class="container"
+            x-data="cpes()"
+            x-show="view==='cpes'"
+            x-cloak
+        >
+            <section class="section">
+                <div class="filter-bar">
+                    <div class="filter-left">
+                        <input
+                            class="search-input"
+                            x-model="search"
+                            @input="onInput()"
+                            placeholder="cpe / vendor / product / package…"
+                        />
+                    </div>
+                    <div class="pager" x-show="!error && total > 0">
+                        <span
+                            x-text="total + (total === 1 ? ' result' : ' results')"
+                        ></span>
+                        <button
+                            class="page-btn"
+                            @click="prev()"
+                            :disabled="page<=1"
+                        >
+                            ‹
+                        </button>
+                        <span x-text="page + ' / ' + pages"></span>
+                        <button
+                            class="page-btn"
+                            @click="next()"
+                            :disabled="page>=pages"
+                        >
+                            ›
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <template x-if="error">
+                <section class="section card card-strong">
+                    <div class="errors-title">Couldn't load CPEs</div>
+                    <div class="error-item" x-text="error"></div>
+                </section>
+            </template>
+
+            <template x-if="!error && !records.length">
+                <p class="vuln-empty">No CPEs found</p>
+            </template>
+
+            <template x-if="!error && records.length">
+                <section class="section">
+                    <div class="cpe-list">
+                        <template x-for="(c, i) in records" :key="i">
+                            <div class="cpe" x-data="{ open: false }">
+                                <div class="cpe-head">
+                                    <span class="cpe-glyph">
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+                                            <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                                            <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+                                            <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                                            <path d="M7 12h10" />
+                                        </svg>
+                                    </span>
+                                    <span class="cpe-id">
+                                        <span
+                                            class="cpe-id-prefix"
+                                            x-text="parts(c).prefix + ':'"
+                                        ></span>
+                                        <span
+                                            class="cpe-id-main"
+                                            x-text="parts(c).vendor"
+                                        ></span>
+                                        <span class="cpe-id-sep">:</span>
+                                        <span
+                                            class="cpe-id-main"
+                                            x-text="parts(c).product"
+                                        ></span>
+                                    </span>
+                                    <span
+                                        class="cpe-count"
+                                        x-text="nMatched(c) + '/4 matched'"
+                                    ></span>
+                                </div>
+
+                                <div
+                                    class="cpe-disclose collapse"
+                                    :class="{ open }"
+                                >
+                                    <button
+                                        type="button"
+                                        class="cpe-disclose-head collapse-header"
+                                        :aria-expanded="open"
+                                        @click="open = !open"
+                                    >
+                                        <span class="collapse-chevron">▶</span>
+                                        <span class="cpe-disclose-label"
+                                            >Why it matched</span
+                                        >
+                                        <span
+                                            class="cpe-disclose-n"
+                                            x-text="nMatched(c) + '/4'"
+                                        ></span>
+                                    </button>
+                                    <dl class="cpe-break collapse-body">
+                                        <div
+                                            class="cpe-break-row"
+                                            :class="{ 'is-off': !matched(c, 'name') }"
+                                        >
+                                            <dt>name</dt>
+                                            <dd>
+                                                <span
+                                                    class="cpe-val"
+                                                    x-text="c.NVDProduct || '—'"
+                                                ></span>
+                                            </dd>
+                                        </div>
+                                        <div
+                                            class="cpe-break-row"
+                                            :class="{ 'is-off': !matched(c, 'vendor') }"
+                                        >
+                                            <dt>vendor</dt>
+                                            <dd>
+                                                <span
+                                                    class="cpe-val"
+                                                    x-text="c.NVDVendor || '—'"
+                                                ></span>
+                                            </dd>
+                                        </div>
+                                        <div
+                                            class="cpe-break-row"
+                                            :class="{ 'is-off': !matched(c, 'ecosystem') }"
+                                        >
+                                            <dt>ecosystem</dt>
+                                            <dd>
+                                                <span
+                                                    class="cpe-val"
+                                                    x-text="c.NVDTargetSw || c.Ecosystem || '—'"
+                                                ></span>
+                                            </dd>
+                                        </div>
+                                        <div
+                                            class="cpe-break-row"
+                                            :class="{ 'is-off': !matched(c, 'range') }"
+                                        >
+                                            <dt>range</dt>
+                                            <dd>
+                                                <div
+                                                    class="cpe-ranges-stack"
+                                                    x-show="(c.NVDRanges||[]).length"
+                                                >
+                                                    <span class="cpe-ranges">
+                                                        <span class="cpe-rlabel"
+                                                            >nvd</span
+                                                        >
+                                                        <template
+                                                            x-for="(r, ri) in (c.NVDRanges||[])"
+                                                            :key="ri"
+                                                        >
+                                                            <span
+                                                                class="cpe-range"
+                                                                x-text="r"
+                                                            ></span>
+                                                        </template>
+                                                    </span>
+                                                    <span
+                                                        class="cpe-ranges"
+                                                        x-show="!matched(c, 'range') && (c.OSVRanges||[]).length"
+                                                    >
+                                                        <span class="cpe-rlabel"
+                                                            >osv</span
+                                                        >
+                                                        <template
+                                                            x-for="(r, ri) in (c.OSVRanges||[])"
+                                                            :key="ri"
+                                                        >
+                                                            <span
+                                                                class="cpe-range"
+                                                                x-text="r"
+                                                            ></span>
+                                                        </template>
+                                                    </span>
+                                                </div>
+                                                <span
+                                                    class="cpe-val"
+                                                    x-show="!(c.NVDRanges||[]).length"
+                                                    >—</span
+                                                >
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                </div>
+
+                                <div class="cpe-foot">
+                                    <span
+                                        class="cpe-eco"
+                                        x-show="c.Ecosystem"
+                                        x-text="c.Ecosystem"
+                                    ></span>
+                                    <span
+                                        class="cpe-purl"
+                                        x-show="c.SPURL"
+                                        @click="location.hash='component/'+encodeURIComponent(c.SPURL)"
+                                        title="Open component"
+                                        x-text="c.SPURL"
+                                    ></span>
+                                    <a
+                                        class="cpe-cve evc-link"
+                                        x-show="c.CVE"
+                                        href="#"
+                                        @click.prevent="location.hash='vuln/'+encodeURIComponent(c.CVE)"
+                                        title="Open vulnerability"
+                                    >
+                                        <span x-text="c.CVE"></span>
+                                        <svg
+                                            class="open-ico"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="M7 7h10v10" />
+                                            <path d="M7 17 17 7" />
+                                        </svg>
+                                    </a>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </section>
+            </template>
+        </main>
+
+        <footer class="footer">
+            <span class="footer-meta"
+                >magpie · __MAGPIE_VERSION__ ·
+                <span x-text="new Date().getFullYear()"></span
+            ></span>
+            <span class="footer-links">
+                <a
+                    class="icon-link"
+                    href="https://github.com/ezequielcamezzana/magpie"
+                    target="_blank"
+                    rel="noopener"
+                    title="GitHub"
+                    aria-label="GitHub"
+                    ><svg
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        aria-hidden="true"
+                    >
+                        <path
+                            d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
+                        /></svg
+                ></a>
+                <a
+                    class="icon-link"
+                    href="https://github.com/ezequielcamezzana/magpie/tree/main/docs"
+                    target="_blank"
+                    rel="noopener"
+                    title="Docs"
+                    aria-label="Docs"
+                    ><svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path
+                            d="M2 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H2z"
+                        />
+                        <path
+                            d="M22 4h-7a3 3 0 0 0-3 3v13a2.5 2.5 0 0 1 2.5-2.5H22z"
+                        /></svg
+                ></a>
+                <a
+                    class="icon-link"
+                    href="https://github.com/ezequielcamezzana/magpie/releases"
+                    target="_blank"
+                    rel="noopener"
+                    title="Install"
+                    aria-label="Install"
+                    ><svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="3" x2="12" y2="15" /></svg
+                ></a>
+            </span>
+        </footer>
+    </body>
+</html>

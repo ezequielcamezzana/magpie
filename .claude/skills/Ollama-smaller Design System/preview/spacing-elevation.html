@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../source/base.css">
+<style>
+  body{padding:22px 26px;background:#fff;}
+  .row{display:flex;gap:18px;align-items:stretch;}
+  .e{flex:1;border-radius:12px;padding:14px;min-height:70px;display:flex;flex-direction:column;justify-content:space-between;}
+  .t{font-family:var(--font-display);font-size:14px;font-weight:600;color:var(--color-ink);}
+  .t-dark{color:#fff;}
+  .d{font-family:var(--font-mono);font-size:10px;color:var(--color-mute);}
+  .cap{font-family:var(--font-body);font-size:11px;color:var(--color-charcoal);margin-top:12px;}
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="e" style="border:1px solid var(--color-hairline)"><span class="t">Hairline</span><span class="d">1px #e5e5e5</span></div>
+    <div class="e" style="border:1px solid var(--color-hairline-strong)"><span class="t">Hairline-strong</span><span class="d">1px #d4d4d4</span></div>
+    <div class="e" style="background:#171717"><span class="t t-dark">Dark surface</span><span class="d">#171717 · once/view</span></div>
+  </div>
+  <div class="cap">The entire depth system. No box-shadow, ever. No gradients, ever.</div>
+</body>
+</html>

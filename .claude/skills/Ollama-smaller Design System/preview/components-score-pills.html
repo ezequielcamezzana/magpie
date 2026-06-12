@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="../source/base.css">
+<style>
+  body{padding:24px 26px;background:#fff;}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .row + .row{margin-top:16px;}
+  .lab{font-family:var(--font-mono);font-size:10px;color:var(--color-mute);width:64px;}
+  .score{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-family:var(--font-mono);font-size:12px;font-weight:600;padding:4px 11px;border-radius:9999px;border:1px solid transparent;}
+  .score .t{font-weight:700;}.score .s{opacity:.45;}.score .b{font-weight:500;}.score .i{font-size:11px;opacity:.6;}
+  .sc-critical{background:var(--color-severity-critical);color:var(--color-severity-critical-ink);border-color:var(--color-severity-critical-border);}
+  .sc-high{background:var(--color-severity-high);color:var(--color-severity-high-ink);border-color:var(--color-severity-high-border);}
+  .sc-medium{background:var(--color-severity-medium);color:var(--color-severity-medium-ink);border-color:var(--color-severity-medium-border);}
+  .sc-low{background:var(--color-severity-low);color:var(--color-severity-low-ink);border-color:var(--color-severity-low-border);}
+</style>
+</head>
+<body>
+  <div class="row"><span class="lab">ExS</span>
+    <span class="score sc-medium"><span class="t">ExS</span><span class="s">·</span>4<span class="s">·</span><span class="b">medium</span><span class="i">ⓘ</span></span>
+    <span class="score sc-high"><span class="t">ExS</span><span class="s">·</span>5<span class="s">·</span><span class="b">high</span><span class="i">ⓘ</span></span>
+  </div>
+  <div class="row"><span class="lab">CVSS</span>
+    <span class="score sc-critical"><span class="t">CVSS</span><span class="s">·</span>9.8<span class="s">·</span><span class="b">critical</span></span>
+    <span class="score sc-high"><span class="t">CVSS</span><span class="s">·</span>8.7<span class="s">·</span><span class="b">high</span></span>
+    <span class="score sc-medium"><span class="t">CVSS</span><span class="s">·</span>6.5<span class="s">·</span><span class="b">medium</span></span>
+    <span class="score sc-low"><span class="t">CVSS</span><span class="s">·</span>3.1<span class="s">·</span><span class="b">low</span></span>
+  </div>
+</body>
+</html>

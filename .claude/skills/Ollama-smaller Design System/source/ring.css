@@ -1,0 +1,30 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Ring — segmented donut chart. Framework-agnostic; pair with ring.js.
+   Color comes only from the severity palette or neutral greys — never brand.
+   Requires tokens.css.
+   ────────────────────────────────────────────────────────────────────────── */
+.ring{ display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.ring-wrap{ position:relative; display:inline-block; cursor:default; }
+
+/* Tooltip on the dark surface — the one "look here" elevation. */
+.ring-tooltip{
+  position:absolute;
+  bottom:calc(100% + 8px);
+  left:50%;
+  transform:translateX(-50%);
+  background:var(--color-surface-dark);
+  color:#fff;
+  border-radius:var(--radius-sm);
+  padding:var(--space-sm) var(--space-md);
+  font-size:11px;
+  white-space:nowrap;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+  z-index:100;
+  display:flex; flex-direction:column; gap:var(--space-xs);
+}
+.ring-wrap:hover .ring-tooltip{ opacity:1; }
+
+.ring-legend-item{ display:flex; align-items:center; gap:var(--space-xs); }
+.ring-swatch{ width:8px; height:8px; border-radius:2px; flex:none; }

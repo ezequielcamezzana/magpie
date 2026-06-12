@@ -1,0 +1,119 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   colors_and_type.css — "Ollama, smaller" design system
+   Base tokens (color + type) plus semantic helpers (h1, h2, p, code…).
+   Derived verbatim from the source tokens.css. Pure monochrome: black ink on a
+   white canvas. The ONLY color in the system is (1) the app's own icon/logo
+   image and (2) the severity palette. Everything else is ink / white / grey.
+   ────────────────────────────────────────────────────────────────────────── */
+:root{
+  /* ── Neutrals (monochrome base) ─────────────────────────────────────────── */
+  --color-canvas:#ffffff;          /* page background / surfaces            */
+  --color-ink:#000000;             /* headings, primary buttons, active     */
+  --color-ink-deep:#090909;        /* primary button :active                */
+  --color-charcoal:#525252;        /* quiet nav text, pager labels          */
+  --color-body:#737373;            /* body prose (default text color)       */
+  --color-mute:#a3a3a3;            /* sub-text, captions, placeholders      */
+  --color-surface-soft:#fafafa;    /* code blocks, badge bg, disabled       */
+  --color-surface-dark:#171717;    /* the one "look here" dark surface      */
+  --color-hairline:#e5e5e5;        /* card borders, dividers                */
+  --color-hairline-strong:#d4d4d4; /* input borders, secondary button       */
+
+  /* Convenience aliases (fg ramp) */
+  --fg1:var(--color-ink);          /* strongest ink   */
+  --fg2:var(--color-charcoal);     /* secondary       */
+  --fg3:var(--color-body);         /* body            */
+  --fg4:var(--color-mute);         /* muted           */
+  --bg1:var(--color-canvas);
+  --bg2:var(--color-surface-soft);
+  --bg-dark:var(--color-surface-dark);
+  --line:var(--color-hairline);
+  --line-strong:var(--color-hairline-strong);
+
+  /* ── Severity palette — the ONE documented exception to monochrome ──────────
+     Soft tint (bg) + matching ink (fg) + colored border (brighter ramp).      */
+  --color-severity-critical:#fee2e2; --color-severity-critical-ink:#991b1b; --color-severity-critical-border:#fca5a5; /* 9.0–10  */
+  --color-severity-high:#ffedd5;     --color-severity-high-ink:#9a3412;     --color-severity-high-border:#fdba74;     /* 7.0–8.9 */
+  --color-severity-medium:#fef9c3;   --color-severity-medium-ink:#854d0e;   --color-severity-medium-border:#fde047;   /* 4.0–6.9 */
+  --color-severity-low:#fafafa;      --color-severity-low-ink:#525252;      --color-severity-low-border:#e5e5e5;      /* 0.1–3.9 */
+  --color-severity-none:#fafafa;     --color-severity-none-ink:#a3a3a3;     --color-severity-none-border:#e5e5e5;     /* no score*/
+
+  /* Status dots (.dot-*, 6px) — saturated severity + lifecycle states */
+  --color-status-clean:#27c93f; --color-status-low:#94a3b8; --color-status-medium:#eab308;
+  --color-status-high:#f97316;  --color-status-critical:#ef4444;
+  --color-status-vuln:#ff5f56;  --color-status-stale:#a3a3a3;
+
+  /* Timeline squares (.tl-*, 13px) — soft pastel ramp on a hairline track */
+  --color-tl-empty:#e5e5e5; --color-tl-clean:#86efac; --color-tl-low:#cbd5e1;
+  --color-tl-medium:#fde047; --color-tl-high:#fdba74; --color-tl-critical:#fca5a5;
+
+  /* Ring chart segment colors (saturated severity / neutral grey ramp) */
+  --ring-critical:#ef4444; --ring-high:#f97316; --ring-medium:#eab308;
+  --ring-low:#94a3b8;      --ring-none:#cbd5e1;
+  --ring-track:#e5e5e5;
+
+  /* ── Shape: pills for interactive, 12px for cards ──────────────────────── */
+  --radius-full:9999px;            /* everything interactive */
+  --radius-lg:12px;                /* cards                  */
+  --radius-sm:6px;                 /* tooltips               */
+
+  /* ── Spacing (compact research-tool scale) ─────────────────────────────── */
+  --space-xs:4px;  --space-sm:8px;  --space-md:12px; --space-lg:16px;
+  --space-xl:24px; --space-xxl:32px; --space-section:48px;
+
+  /* ── Type families ─────────────────────────────────────────────────────── */
+  --font-display:"SF Pro Rounded",system-ui,-apple-system,sans-serif; /* headings ≥18px */
+  --font-body:ui-sans-serif,system-ui,-apple-system,sans-serif;       /* everything else */
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; /* code, IDs, badges */
+
+  /* ── Type scale (compact: 14 body / 24 hero) ───────────────────────────── */
+  --text-hero:24px;   --text-card-title:18px; --text-body:14px;
+  --text-sm:13px;     --text-xs:11px;
+  --leading-tight:1.2; --leading-normal:1.45;
+  --weight-medium:500; --weight-semibold:600;
+}
+
+/* ── Semantic type helpers ────────────────────────────────────────────────
+   Use these classes (or copy their declarations) to apply the system's type
+   roles. Headings ≥18px use --font-display; body/labels use --font-body. */
+.ds-hero, h1.ds{
+  font-family:var(--font-display);
+  font-size:var(--text-hero);
+  font-weight:var(--weight-medium);
+  line-height:var(--leading-tight);
+  color:var(--color-ink);
+}
+.ds-card-title, h2.ds{
+  font-family:var(--font-display);
+  font-size:var(--text-card-title);
+  font-weight:var(--weight-semibold);
+  line-height:1.3;
+  color:var(--color-ink);
+}
+.ds-brand{
+  font-family:var(--font-display);
+  font-size:16px;
+  font-weight:var(--weight-semibold);
+  color:var(--color-ink);
+}
+.ds-body, p.ds{
+  font-family:var(--font-body);
+  font-size:var(--text-body);
+  line-height:var(--leading-normal);
+  color:var(--color-body);
+}
+.ds-sub, .ds-caption{
+  font-family:var(--font-body);
+  font-size:var(--text-sm);
+  color:var(--color-mute);
+}
+.ds-label{
+  font-family:var(--font-body);
+  font-size:var(--text-sm);
+  font-weight:var(--weight-medium);
+  color:var(--color-charcoal);
+}
+.ds-mono, code.ds{
+  font-family:var(--font-mono);
+  font-size:var(--text-sm);
+  color:var(--color-ink);
+}
