@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ezequielcamezzana/magpie"
 	"github.com/ezequielcamezzana/magpie/httpapi"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
 	// WHY: registran los fetchers de cada source y el stage CPER (init); sin
@@ -65,7 +65,7 @@ func main() {
 	}
 	defer db.Close()
 
-	cfg := magpie.Config{
+	cfg := collect.Config{
 		Store:     db,
 		NVDAPIKey: nvdKey,
 		MaxAge:    maxAge,

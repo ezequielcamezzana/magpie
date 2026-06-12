@@ -5,18 +5,18 @@ import (
 	"strings"
 	"time"
 
-	magpie "github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
-// parseCVE decodes a raw NVD `cve` object into magpie.NVDCVE: metadata + the
+// parseCVE decodes a raw NVD `cve` object into collect.NVDCVE: metadata + the
 // per-(vendor:product) CPE matches CPER resolves from.
-func parseCVE(raw []byte) (*magpie.NVDCVE, error) {
+func parseCVE(raw []byte) (*collect.NVDCVE, error) {
 	var cve rawCVE
 	if err := json.Unmarshal(raw, &cve); err != nil {
 		return nil, err
 	}
 	_, score := bestCVSS(cve.Metrics)
-	return &magpie.NVDCVE{
+	return &collect.NVDCVE{
 		ID:        cve.ID,
 		Score:     score,
 		Severity:  severityFromScore(score),
@@ -29,9 +29,9 @@ func parseCVE(raw []byte) (*magpie.NVDCVE, error) {
 // extractMatches collapses every vulnerable cpeMatch into one NVDCPEMatch per
 // (vendor:product): unions version intervals (deduped), captures the first
 // non-wildcard target_sw, and the fixed versions (VersionEndExcluding).
-func extractMatches(configs []rawConfig) []magpie.NVDCPEMatch {
+func extractMatches(configs []rawConfig) []collect.NVDCPEMatch {
 	type bucket struct {
-		m       magpie.NVDCPEMatch
+		m       collect.NVDCPEMatch
 		seenIvl map[string]bool
 		seenFix map[string]bool
 	}
@@ -43,7 +43,7 @@ func extractMatches(configs []rawConfig) []magpie.NVDCPEMatch {
 		b, ok := buckets[key]
 		if !ok {
 			b = &bucket{
-				m:       magpie.NVDCPEMatch{PartialCPE: "cpe:2.3:a:" + key, Vendor: vendor, Product: product},
+				m:       collect.NVDCPEMatch{PartialCPE: "cpe:2.3:a:" + key, Vendor: vendor, Product: product},
 				seenIvl: map[string]bool{},
 				seenFix: map[string]bool{},
 			}
@@ -76,7 +76,7 @@ func extractMatches(configs []rawConfig) []magpie.NVDCPEMatch {
 		}
 	}
 
-	out := make([]magpie.NVDCPEMatch, 0, len(order))
+	out := make([]collect.NVDCPEMatch, 0, len(order))
 	for _, key := range order {
 		out = append(out, buckets[key].m)
 	}

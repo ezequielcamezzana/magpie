@@ -1,4 +1,4 @@
-package magpie
+package collect
 
 import (
 	"context"
@@ -13,59 +13,61 @@ import (
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
-// ErrSourceNotApplicable lo devuelve un fetcher cuando no tiene un path de datos
-// para este purl type (p.ej. ecosyste.ms no tiene registry para deb/rpm). No es
-// un fallo: el stage se saltea sin emitir SourceError.
+// ErrSourceNotApplicable is returned by a fetcher when it has no data path for
+// this purl type (e.g. ecosyste.ms has no registry for deb/rpm). Not a
+// failure: the stage is skipped without emitting a SourceError.
 var ErrSourceNotApplicable = errors.New("source not applicable for purl type")
 
-// EcosystemsFetcher es la dependencia de stage 1; *ecosystems.Client la
-// satisface. Existe para poder stubear en tests.
+// EcosystemsFetcher is the stage 1 dependency; *ecosystems.Client satisfies
+// it. Exists so it can be stubbed in tests.
 //
-// WHY: exportada (no interna) porque source/ecosystems debe referenciarla al
-// registrar su constructor desde otro package — ver RegisterEcosystemsFetcher.
+// WHY: exported (not internal) because source/ecosystems must reference it
+// when registering its constructor from another package — see
+// RegisterEcosystemsFetcher.
 type EcosystemsFetcher interface {
 	Fetch(ctx context.Context, spurl string) (Component, *Repository, []VulnRecord, error)
 }
 
-// newEcosystemsFetcher construye el fetcher real de stage 1.
+// newEcosystemsFetcher builds the real stage 1 fetcher.
 //
-// WHY: source/ecosystems importa este package (devuelve Component/etc.), así
-// que magpie no puede importarlo de vuelta sin un ciclo. El paquete ecosystems
-// registra acá su constructor en su init().
+// WHY: source/ecosystems imports this package (it returns Component/etc.), so
+// collect cannot import it back without a cycle. The ecosystems package
+// registers its constructor here in its init().
 var newEcosystemsFetcher func(httpc *http.Client, logger *slog.Logger) EcosystemsFetcher
 
-// RegisterEcosystemsFetcher instala el constructor del fetcher real. La llama
-// source/ecosystems en su init().
+// RegisterEcosystemsFetcher installs the real fetcher constructor. Called by
+// source/ecosystems in its init().
 func RegisterEcosystemsFetcher(f func(httpc *http.Client, logger *slog.Logger) EcosystemsFetcher) {
 	newEcosystemsFetcher = f
 }
 
-// OSVFetcher es la dependencia de stage 2; *osv.Client la satisface. Espejo de
-// EcosystemsFetcher para poder stubear en tests y evitar el ciclo de imports.
+// OSVFetcher is the stage 2 dependency; *osv.Client satisfies it. Mirror of
+// EcosystemsFetcher so it can be stubbed in tests and to avoid the import
+// cycle.
 type OSVFetcher interface {
 	Query(ctx context.Context, q purl.OSVQuery) ([]VulnRecord, error)
 }
 
 var newOSVFetcher func(httpc *http.Client, logger *slog.Logger) OSVFetcher
 
-// RegisterOSVFetcher instala el constructor del fetcher real de OSV. La llama
-// source/osv en su init().
+// RegisterOSVFetcher installs the real OSV fetcher constructor. Called by
+// source/osv in its init().
 func RegisterOSVFetcher(f func(httpc *http.Client, logger *slog.Logger) OSVFetcher) {
 	newOSVFetcher = f
 }
 
-// runCPERStage es el stage 3 (CPER) instalado por el package cper. Mismo
-// patrón que los fetchers: cper importa magpie, así que magpie no puede
-// importarlo de vuelta sin un ciclo. nil = CPER no cableado → se saltea.
+// runCPERStage is stage 3 (CPER), installed by the cper package. Same pattern
+// as the fetchers: cper imports collect, so collect cannot import it back
+// without a cycle. nil = CPER not wired → the stage is skipped.
 var runCPERStage func(ctx context.Context, httpc *http.Client, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time)
 
-// RegisterCPER instala el stage 3. Lo llama el package cper en su init().
+// RegisterCPER installs stage 3. Called by the cper package in its init().
 func RegisterCPER(f func(ctx context.Context, httpc *http.Client, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time)) {
 	runCPERStage = f
 }
 
-// Collect orquesta el pipeline de recolección para una coordinate: stage 1
-// (ecosyste.ms), stage 2 (OSV), y luego ensamblado + matching + roll-up.
+// Collect orchestrates the collection pipeline for one coordinate: stage 1
+// (ecosyste.ms), stage 2 (OSV), then assembly + matching + roll-up.
 func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("collect: cfg.Store is nil")
@@ -98,7 +100,7 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 
 	errs = append(errs, runOSV(ctx, httpClient, cfg.Store, q, osvKey, spurl, cfg.MaxAge, now)...)
 
-	// Ensamblado: leer del store unifica cache-hit y fresh-fetch.
+	// Assembly: reading from the store unifies cache-hit and fresh-fetch.
 	var allRecords []VulnRecord
 	if r, _ := cfg.Store.GetVulns(ctx, SourceEcosystems, spurl); r.Found {
 		allRecords = append(allRecords, r.Value...)
@@ -109,8 +111,8 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 		}
 	}
 
-	// Stage 3: CPER — resuelve CPE(s) desde los CVE de allRecords y persiste los
-	// CVE NVD como vuln records (source=nvd, key=spurl).
+	// Stage 3: CPER — resolves CPE(s) from the CVEs in allRecords and persists
+	// the NVD CVEs as vuln records (source=nvd, key=spurl).
 	repoURL := ""
 	if res.Component != nil {
 		repoURL = res.Component.RepoURL
@@ -119,7 +121,7 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 		runCPERStage(ctx, httpClient, cfg, identity, spurl, repoURL, allRecords, now)
 	}
 
-	// Los records NVD que dejó CPER se suman al paquete (3ra fuente del canonical).
+	// The NVD records CPER left behind join the bundle (3rd source of the canonical).
 	if r, _ := cfg.Store.GetVulns(ctx, SourceNVD, spurl); r.Found {
 		allRecords = append(allRecords, r.Value...)
 	}
@@ -127,9 +129,9 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 		res.CPEs = c.Value
 	}
 
-	// Si el pipeline no produjo Component (ecosyste.ms no cubre este purl) pero
-	// sí hay vulns, sintetizamos uno desde el purl parseado para que la UI tenga
-	// nombre y repo. Sólo github trae RepoURL acá (vía Decompose).
+	// If the pipeline produced no Component (ecosyste.ms doesn't cover this
+	// purl) but there are vulns, synthesize one from the parsed purl so the UI
+	// has a name and repo. Only github carries RepoURL here (via Decompose).
 	if res.Component == nil && len(allRecords) > 0 {
 		comp := syntheticComponent(identity, spurl, now)
 		_ = cfg.Store.PutComponent(ctx, comp)
@@ -143,9 +145,9 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 	return res, nil
 }
 
-// syntheticComponent arma un Component mínimo desde el purl decompuesto, para
-// purls con vulns que ecosyste.ms no cubre (p.ej. pkg:github/...). RepoURL ya
-// viene seteado por Decompose para github; vacío para el resto.
+// syntheticComponent builds a minimal Component from the decomposed purl, for
+// purls with vulns that ecosyste.ms doesn't cover (e.g. pkg:github/...).
+// RepoURL is already set by Decompose for github; empty for the rest.
 func syntheticComponent(id purl.Identity, spurl string, now time.Time) Component {
 	return Component{
 		SPURL:     spurl,
@@ -155,9 +157,9 @@ func syntheticComponent(id purl.Identity, spurl string, now time.Time) Component
 	}
 }
 
-// FromStore ensambla un Result para coord usando SOLO la cache (store), sin
-// fetchers ni red. Lo usa la página de componente, que no debe re-scrapear.
-// Si coord no trae versión, el matching marca todas las vulns como afectadas.
+// FromStore assembles a Result for coord using ONLY the cache (store), no
+// fetchers or network. Used by the component page, which must not re-scrape.
+// If coord has no version, matching marks every vuln as affected.
 func FromStore(ctx context.Context, coord string, st Store) (*Result, error) {
 	if st == nil {
 		return nil, errors.New("fromstore: store is nil")
@@ -192,7 +194,7 @@ func FromStore(ctx context.Context, coord string, st Store) (*Result, error) {
 			allRecords = append(allRecords, r.Value...)
 		}
 	}
-	// NVD records + CPEs ya resueltos (store-only, sin red).
+	// NVD records + already-resolved CPEs (store-only, no network).
 	if r, _ := st.GetVulns(ctx, SourceNVD, spurl); r.Found {
 		allRecords = append(allRecords, r.Value...)
 	}
@@ -205,8 +207,8 @@ func FromStore(ctx context.Context, coord string, st Store) (*Result, error) {
 	return res, nil
 }
 
-// orderGroups ordena los grupos para que ganen los más peligrosos y más nuevos:
-// MaxScore (CVSS) desc, y a igual score el de Updated más reciente primero.
+// orderGroups sorts groups so the most dangerous and newest win: MaxScore
+// (CVSS) desc, and on equal score the most recently Updated first.
 func orderGroups(groups []VulnGroup) {
 	sort.SliceStable(groups, func(i, j int) bool {
 		if groups[i].MaxScore != groups[j].MaxScore {
@@ -216,14 +218,14 @@ func orderGroups(groups []VulnGroup) {
 	})
 }
 
-// runOSV resuelve stage 2 (cache-aware, mismo patrón que stage 1). Devuelve
-// SourceErrors no fatales; nunca aborta el pipeline.
+// runOSV resolves stage 2 (cache-aware, same pattern as stage 1). Returns
+// non-fatal SourceErrors; never aborts the pipeline.
 func runOSV(ctx context.Context, httpc *http.Client, st Store, q purl.OSVQuery, osvKey string, spurl string, maxAge time.Duration, now time.Time) []SourceError {
 	if osvKey == "" {
 		return nil
 	}
 	if newOSVFetcher == nil {
-		// TODO: distinguir "disabled" de "broke".
+		// TODO: distinguish "disabled" from "broke".
 		return []SourceError{{Source: SourceOSV, Kind: "other", Err: errors.New("osv fetcher not registered")}}
 	}
 
@@ -236,15 +238,16 @@ func runOSV(ctx context.Context, httpc *http.Client, st Store, q purl.OSVQuery, 
 		return []SourceError{{Source: SourceOSV, Kind: "other", Err: fmt.Errorf("osv query: %w", err)}}
 	}
 
-	// WHY: stampear el canonical por-record antes de persistir deja poblada la
-	// columna canonical_id del store (DD §7 la indexa para /vulnerabilities).
-	// FetchedAt va acá (el client no lo conoce) y alimenta la freshness del cache.
+	// WHY: stamping the canonical per-record before persisting populates the
+	// store's canonical_id column (DD §7 indexes it for /vulnerabilities).
+	// FetchedAt goes here (the client doesn't know it) and feeds cache freshness.
 	for i := range records {
 		records[i].CanonicalID = CanonicalIDFor(records[i])
 		records[i].FetchedAt = now
-		// WHY: OSV-GIT (github/curl/curl) viene con package vacío → sin purl la
-		// vuln no queda asociada al paquete por affected_package. Estampamos el
-		// spurl consultado solo cuando OSV no reporta uno (preserva el real).
+		// WHY: OSV-GIT (github/curl/curl) comes with an empty package → without
+		// a purl the vuln isn't associated to the package via affected_package.
+		// We stamp the queried spurl only when OSV doesn't report one
+		// (preserves the real one).
 		if records[i].AffectedPackage == "" {
 			records[i].AffectedPackage = spurl
 		}
@@ -253,14 +256,14 @@ func runOSV(ctx context.Context, httpc *http.Client, st Store, q purl.OSVQuery, 
 	return nil
 }
 
-// matchGroups corre matching per-record sobre cada CanonicalGroup y hace el
-// roll-up binario por grupo.
+// matchGroups runs per-record matching over each CanonicalGroup and does the
+// binary per-group roll-up.
 func matchGroups(groups []CanonicalGroup, identity purl.Identity, version string) []VulnGroup {
 	out := make([]VulnGroup, 0, len(groups))
 	for _, g := range groups {
 		vg := VulnGroup{CanonicalID: g.CanonicalID, MaxScore: g.MaxScore}
 		for _, r := range g.Records {
-			// Created = Published más viejo; Updated = Modified más nuevo.
+			// Created = oldest Published; Updated = newest Modified.
 			if !r.Published.IsZero() && (vg.Created.IsZero() || r.Published.Before(vg.Created)) {
 				vg.Created = r.Published
 			}
@@ -285,8 +288,8 @@ func matchGroups(groups []CanonicalGroup, identity purl.Identity, version string
 					Warnings: mr.Warnings,
 				},
 			})
-			// WHY: roll-up OR (DD §6 nivel 2) — el grupo está afectado si ALGÚN
-			// record matcheó.
+			// WHY: OR roll-up (DD §6 level 2) — the group is affected if ANY
+			// record matched.
 			if mr.Matched {
 				vg.Affected = true
 			}
@@ -296,8 +299,8 @@ func matchGroups(groups []CanonicalGroup, identity purl.Identity, version string
 	return out
 }
 
-// collectStage1 resuelve Component/Repository/Vulns desde ecosyste.ms, leyendo
-// del store si el dato está fresco y fetcheando+persistiendo si no.
+// collectStage1 resolves Component/Repository/Vulns from ecosyste.ms, reading
+// from the store when the data is fresh and fetching+persisting when not.
 func collectStage1(ctx context.Context, fetcher EcosystemsFetcher, st Store, spurl string, maxAge time.Duration, now time.Time) (*Result, []SourceError) {
 	var errs []SourceError
 
@@ -316,12 +319,12 @@ func collectStage1(ctx context.Context, fetcher EcosystemsFetcher, st Store, spu
 
 	comp, repo, vulns, err := fetcher.Fetch(ctx, spurl)
 	if errors.Is(err, ErrSourceNotApplicable) {
-		// ecosyste.ms no cubre este purl type (deb/rpm/apk/…): no es un error,
-		// la data de distro llega por OSV. Skip limpio, sin SourceError.
+		// ecosyste.ms doesn't cover this purl type (deb/rpm/apk/…): not an
+		// error, distro data arrives via OSV. Clean skip, no SourceError.
 		return &Result{}, errs
 	}
 	if err != nil {
-		// TODO: clasificar el error (Kind sigue siempre "other").
+		// TODO: classify the error (Kind is still always "other").
 		errs = append(errs, SourceError{Source: SourceEcosystems, Kind: "other", Err: err})
 		return &Result{}, errs
 	}
@@ -330,9 +333,10 @@ func collectStage1(ctx context.Context, fetcher EcosystemsFetcher, st Store, spu
 	if repo != nil {
 		_ = st.PutRepository(ctx, *repo)
 	}
-	// WHY: stampear el canonical por-record deja poblada la columna canonical_id
-	// del store (DD §7). Group igual re-deriva al leer — idempotente.
-	// FetchedAt va acá (el client no lo conoce) y alimenta la freshness del cache.
+	// WHY: stamping the canonical per-record populates the store's
+	// canonical_id column (DD §7). Group re-derives it on read anyway —
+	// idempotent. FetchedAt goes here (the client doesn't know it) and feeds
+	// cache freshness.
 	for i := range vulns {
 		vulns[i].CanonicalID = CanonicalIDFor(vulns[i])
 		vulns[i].FetchedAt = now
@@ -342,12 +346,12 @@ func collectStage1(ctx context.Context, fetcher EcosystemsFetcher, st Store, spu
 	return &Result{Component: &comp, Repository: repo}, errs
 }
 
-// IsFresh reporta si fetchedAt está dentro de maxAge respecto a now. Es la
-// regla de freshness del pipeline (el Store solo guarda FetchedAt); exportada
-// porque el package cper la comparte.
+// IsFresh reports whether fetchedAt is within maxAge relative to now. It is
+// the pipeline's freshness rule (the Store only keeps FetchedAt); exported
+// because the cper package shares it.
 //
-// WHY: maxAge<=0 significa "siempre refetch" (decisión de diseño), por eso
-// retorna false en ese caso aunque el dato sea reciente.
+// WHY: maxAge<=0 means "always refetch" (design decision), hence it returns
+// false in that case even if the data is recent.
 func IsFresh(fetchedAt time.Time, maxAge time.Duration, now time.Time) bool {
 	if maxAge <= 0 {
 		return false

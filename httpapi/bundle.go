@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
 // vulnPageSize es la cantidad de grupos de vuln por página (el BE pagina tras
@@ -45,7 +45,7 @@ func parseVulnParams(r *http.Request) (vpage int, vorder, vfilter string) {
 // paginateGroups ordena (vorder), filtra (vfilter) y pagina los grupos ya
 // ensamblados. El filtro se aplica ANTES de paginar (por eso la página nunca
 // queda vacía cuando hay matches). El meta trae los conteos globales.
-func paginateGroups(groups []magpie.VulnGroup, vpage int, vorder, vfilter string) ([]magpie.VulnGroup, vulnPage) {
+func paginateGroups(groups []collect.VulnGroup, vpage int, vorder, vfilter string) ([]collect.VulnGroup, vulnPage) {
 	all := len(groups)
 	affected := 0
 	for _, g := range groups {
@@ -67,7 +67,7 @@ func paginateGroups(groups []magpie.VulnGroup, vpage int, vorder, vfilter string
 
 	work := groups
 	if vfilter == "affected" {
-		work = make([]magpie.VulnGroup, 0, affected)
+		work = make([]collect.VulnGroup, 0, affected)
 		for _, g := range groups {
 			if g.Affected {
 				work = append(work, g)
@@ -101,9 +101,9 @@ func paginateGroups(groups []magpie.VulnGroup, vpage int, vorder, vfilter string
 
 // writeBundle serializa el Result (con Groups ya recortado a la página) más el
 // meta de paginación de vulns. Serializer compartido por /collect y /component.
-func writeBundle(w http.ResponseWriter, res *magpie.Result, meta vulnPage) {
+func writeBundle(w http.ResponseWriter, res *collect.Result, meta vulnPage) {
 	writeJSON(w, http.StatusOK, struct {
-		*magpie.Result
+		*collect.Result
 		Vuln vulnPage `json:"Vuln"`
 	}{res, meta})
 }

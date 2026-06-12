@@ -1,4 +1,4 @@
-// Package sqlite implementa magpie.Store sobre SQLite (driver puro Go
+// Package sqlite implementa collect.Store sobre SQLite (driver puro Go
 // modernc.org/sqlite) con el schema embebido en schema.sql.
 package sqlite
 
@@ -13,7 +13,7 @@ import (
 
 	_ "embed"
 
-	magpie "github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 
 	_ "modernc.org/sqlite"
 )
@@ -21,7 +21,7 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-var _ magpie.Store = (*Store)(nil)
+var _ collect.Store = (*Store)(nil)
 
 type Store struct {
 	db *sql.DB
@@ -73,36 +73,36 @@ const componentColumns = `spurl, name, description, licenses_json, latest_versio
 type rowScanner interface{ Scan(dest ...any) error }
 
 // scanComponent reconstruye un Component desde la fila actual.
-func scanComponent(sc rowScanner) (magpie.Component, error) {
-	var c magpie.Component
+func scanComponent(sc rowScanner) (collect.Component, error) {
+	var c collect.Component
 	var licensesJSON, fetchedAt string
 	if err := sc.Scan(&c.SPURL, &c.Name, &c.Description, &licensesJSON,
 		&c.LatestVersion, &c.RepoURL, &c.Icon, &fetchedAt); err != nil {
-		return magpie.Component{}, err
+		return collect.Component{}, err
 	}
 	if err := json.Unmarshal([]byte(licensesJSON), &c.Licenses); err != nil {
-		return magpie.Component{}, fmt.Errorf("unmarshal licenses: %w", err)
+		return collect.Component{}, fmt.Errorf("unmarshal licenses: %w", err)
 	}
 	c.FetchedAt = parseTime(fetchedAt)
 	return c, nil
 }
 
-func (s *Store) GetComponent(ctx context.Context, spurl string) (magpie.StoreResult[magpie.Component], error) {
+func (s *Store) GetComponent(ctx context.Context, spurl string) (collect.StoreResult[collect.Component], error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+componentColumns+` FROM components WHERE spurl = ?`, spurl)
 
 	c, err := scanComponent(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return magpie.StoreResult[magpie.Component]{}, nil
+		return collect.StoreResult[collect.Component]{}, nil
 	}
 	if err != nil {
-		return magpie.StoreResult[magpie.Component]{}, fmt.Errorf("scan component: %w", err)
+		return collect.StoreResult[collect.Component]{}, fmt.Errorf("scan component: %w", err)
 	}
 
-	return magpie.StoreResult[magpie.Component]{Value: c, FetchedAt: c.FetchedAt, Found: true}, nil
+	return collect.StoreResult[collect.Component]{Value: c, FetchedAt: c.FetchedAt, Found: true}, nil
 }
 
-func (s *Store) QueryComponents(ctx context.Context, q magpie.ComponentQuery) ([]magpie.Component, int, error) {
+func (s *Store) QueryComponents(ctx context.Context, q collect.ComponentQuery) ([]collect.Component, int, error) {
 	var conds []string
 	var args []any
 	if q.Name != "" {
@@ -144,7 +144,7 @@ func (s *Store) QueryComponents(ctx context.Context, q magpie.ComponentQuery) ([
 	}
 	defer rows.Close()
 
-	var out []magpie.Component
+	var out []collect.Component
 	for rows.Next() {
 		c, err := scanComponent(rows)
 		if err != nil {
@@ -158,7 +158,7 @@ func (s *Store) QueryComponents(ctx context.Context, q magpie.ComponentQuery) ([
 	return out, total, nil
 }
 
-func (s *Store) PutComponent(ctx context.Context, c magpie.Component) error {
+func (s *Store) PutComponent(ctx context.Context, c collect.Component) error {
 	// NOTE: nil y slice vacío se persisten ambos como "[]" y vuelven como
 	// slice no-nil de largo 0.
 	licenses := c.Licenses
@@ -189,29 +189,29 @@ func (s *Store) PutComponent(ctx context.Context, c magpie.Component) error {
 	return nil
 }
 
-func (s *Store) GetRepository(ctx context.Context, repoURL string) (magpie.StoreResult[magpie.Repository], error) {
+func (s *Store) GetRepository(ctx context.Context, repoURL string) (collect.StoreResult[collect.Repository], error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT url, stars, forks, language, last_push, last_release, fetched_at
 		 FROM repositories WHERE url = ?`, repoURL)
 
-	var r magpie.Repository
+	var r collect.Repository
 	var lastPush, lastRelease, fetchedAt string
 	err := row.Scan(&r.URL, &r.Stars, &r.Forks, &r.Language, &lastPush, &lastRelease, &fetchedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return magpie.StoreResult[magpie.Repository]{}, nil
+		return collect.StoreResult[collect.Repository]{}, nil
 	}
 	if err != nil {
-		return magpie.StoreResult[magpie.Repository]{}, fmt.Errorf("scan repository: %w", err)
+		return collect.StoreResult[collect.Repository]{}, fmt.Errorf("scan repository: %w", err)
 	}
 
 	r.LastPush = parseTime(lastPush)
 	r.LastRelease = parseTime(lastRelease)
 	r.FetchedAt = parseTime(fetchedAt)
 
-	return magpie.StoreResult[magpie.Repository]{Value: r, FetchedAt: r.FetchedAt, Found: true}, nil
+	return collect.StoreResult[collect.Repository]{Value: r, FetchedAt: r.FetchedAt, Found: true}, nil
 }
 
-func (s *Store) PutRepository(ctx context.Context, r magpie.Repository) error {
+func (s *Store) PutRepository(ctx context.Context, r collect.Repository) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO repositories (url, stars, forks, language, last_push, last_release, fetched_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -234,36 +234,36 @@ const cpeColumns = `spurl, cpe, vendor, product, target_sw, cve, ecosystem,
 	matched_name, matched_vendor, matched_ecosystem, matched_range,
 	nvd_ranges, osv_ranges, explanation, fetched_at`
 
-func (s *Store) GetCPEs(ctx context.Context, spurl string) (magpie.StoreResult[[]magpie.ResolvedCPE], error) {
+func (s *Store) GetCPEs(ctx context.Context, spurl string) (collect.StoreResult[[]collect.ResolvedCPE], error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+cpeColumns+` FROM cpes WHERE spurl = ? ORDER BY cpe`, spurl)
 	if err != nil {
-		return magpie.StoreResult[[]magpie.ResolvedCPE]{}, fmt.Errorf("query cpes: %w", err)
+		return collect.StoreResult[[]collect.ResolvedCPE]{}, fmt.Errorf("query cpes: %w", err)
 	}
 	defer rows.Close()
 
-	var out []magpie.ResolvedCPE
+	var out []collect.ResolvedCPE
 	var fetchedAt time.Time
 	for rows.Next() {
 		c, ft, err := scanCPE(rows)
 		if err != nil {
-			return magpie.StoreResult[[]magpie.ResolvedCPE]{}, err
+			return collect.StoreResult[[]collect.ResolvedCPE]{}, err
 		}
 		out = append(out, c)
 		fetchedAt = ft
 	}
 	if err := rows.Err(); err != nil {
-		return magpie.StoreResult[[]magpie.ResolvedCPE]{}, fmt.Errorf("iterate cpes: %w", err)
+		return collect.StoreResult[[]collect.ResolvedCPE]{}, fmt.Errorf("iterate cpes: %w", err)
 	}
 	if len(out) == 0 {
-		return magpie.StoreResult[[]magpie.ResolvedCPE]{}, nil
+		return collect.StoreResult[[]collect.ResolvedCPE]{}, nil
 	}
-	return magpie.StoreResult[[]magpie.ResolvedCPE]{Value: out, FetchedAt: fetchedAt, Found: true}, nil
+	return collect.StoreResult[[]collect.ResolvedCPE]{Value: out, FetchedAt: fetchedAt, Found: true}, nil
 }
 
 // PutCPEs reemplaza el set de CPEs de spurl (una fila por CPE) en una tx,
 // stampeando fetched_at = now.
-func (s *Store) PutCPEs(ctx context.Context, spurl string, cpes []magpie.ResolvedCPE) error {
+func (s *Store) PutCPEs(ctx context.Context, spurl string, cpes []collect.ResolvedCPE) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -334,26 +334,26 @@ func matchedByFromBools(mn, mv, me, mr string) []string {
 
 // scanCPE reconstruye un ResolvedCPE (incluido SPURL) desde la fila actual y
 // devuelve su fetched_at. El orden de columnas coincide con cpeColumns.
-func scanCPE(sc rowScanner) (magpie.ResolvedCPE, time.Time, error) {
-	var c magpie.ResolvedCPE
+func scanCPE(sc rowScanner) (collect.ResolvedCPE, time.Time, error) {
+	var c collect.ResolvedCPE
 	var mn, mv, me, mr, nvdRanges, osvRanges, ft string
 	if err := sc.Scan(&c.SPURL, &c.CPE, &c.NVDVendor, &c.NVDProduct, &c.NVDTargetSw,
 		&c.CVE, &c.Ecosystem, &mn, &mv, &me, &mr, &nvdRanges, &osvRanges, &c.Explanation, &ft); err != nil {
-		return magpie.ResolvedCPE{}, time.Time{}, fmt.Errorf("scan cpe: %w", err)
+		return collect.ResolvedCPE{}, time.Time{}, fmt.Errorf("scan cpe: %w", err)
 	}
 	c.MatchedBy = matchedByFromBools(mn, mv, me, mr)
 	if err := unmarshalList(nvdRanges, &c.NVDRanges); err != nil {
-		return magpie.ResolvedCPE{}, time.Time{}, err
+		return collect.ResolvedCPE{}, time.Time{}, err
 	}
 	if err := unmarshalList(osvRanges, &c.OSVRanges); err != nil {
-		return magpie.ResolvedCPE{}, time.Time{}, err
+		return collect.ResolvedCPE{}, time.Time{}, err
 	}
 	return c, parseTime(ft), nil
 }
 
 // QueryCPEs lista CPEs resueltos (read path para /cpes), buscables por
 // cpe/vendor/product/spurl. Espejo de QueryComponents.
-func (s *Store) QueryCPEs(ctx context.Context, q magpie.CPEQuery) ([]magpie.ResolvedCPE, int, error) {
+func (s *Store) QueryCPEs(ctx context.Context, q collect.CPEQuery) ([]collect.ResolvedCPE, int, error) {
 	where := ""
 	var args []any
 	if q.Search != "" {
@@ -386,7 +386,7 @@ func (s *Store) QueryCPEs(ctx context.Context, q magpie.CPEQuery) ([]magpie.Reso
 	}
 	defer rows.Close()
 
-	var out []magpie.ResolvedCPE
+	var out []collect.ResolvedCPE
 	for rows.Next() {
 		c, _, err := scanCPE(rows)
 		if err != nil {
@@ -412,15 +412,15 @@ const vulnCols = `pv.source, pv.query_key, pv.affected_package, pv.original_id,
 const vulnJoin = ` FROM package_vuln pv
 	JOIN vulns v ON pv.source = v.source AND pv.original_id = v.original_id`
 
-func (s *Store) GetVulns(ctx context.Context, source, queryKey string) (magpie.StoreResult[[]magpie.VulnRecord], error) {
+func (s *Store) GetVulns(ctx context.Context, source, queryKey string) (collect.StoreResult[[]collect.VulnRecord], error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+vulnCols+vulnJoin+` WHERE pv.source = ? AND pv.query_key = ?`, source, queryKey)
 	if err != nil {
-		return magpie.StoreResult[[]magpie.VulnRecord]{}, fmt.Errorf("query vulns: %w", err)
+		return collect.StoreResult[[]collect.VulnRecord]{}, fmt.Errorf("query vulns: %w", err)
 	}
 	defer rows.Close()
 
-	var recs []magpie.VulnRecord
+	var recs []collect.VulnRecord
 	// WHY: el caller refetchea todo el set por una key si cualquier fila está
 	// stale, así que el FetchedAt del Result es el MIN de las filas. Se calcula
 	// en Go (no MIN() SQL) porque sería un orden lexicográfico de strings que
@@ -429,7 +429,7 @@ func (s *Store) GetVulns(ctx context.Context, source, queryKey string) (magpie.S
 	for rows.Next() {
 		r, fetched, err := scanVuln(rows)
 		if err != nil {
-			return magpie.StoreResult[[]magpie.VulnRecord]{}, err
+			return collect.StoreResult[[]collect.VulnRecord]{}, err
 		}
 		if minFetched.IsZero() || fetched.Before(minFetched) {
 			minFetched = fetched
@@ -437,16 +437,16 @@ func (s *Store) GetVulns(ctx context.Context, source, queryKey string) (magpie.S
 		recs = append(recs, r)
 	}
 	if err := rows.Err(); err != nil {
-		return magpie.StoreResult[[]magpie.VulnRecord]{}, fmt.Errorf("iterate vulns: %w", err)
+		return collect.StoreResult[[]collect.VulnRecord]{}, fmt.Errorf("iterate vulns: %w", err)
 	}
 
 	if len(recs) == 0 {
-		return magpie.StoreResult[[]magpie.VulnRecord]{}, nil
+		return collect.StoreResult[[]collect.VulnRecord]{}, nil
 	}
-	return magpie.StoreResult[[]magpie.VulnRecord]{Value: recs, FetchedAt: minFetched, Found: true}, nil
+	return collect.StoreResult[[]collect.VulnRecord]{Value: recs, FetchedAt: minFetched, Found: true}, nil
 }
 
-func (s *Store) PutVulns(ctx context.Context, source, queryKey string, vs []magpie.VulnRecord) error {
+func (s *Store) PutVulns(ctx context.Context, source, queryKey string, vs []collect.VulnRecord) error {
 	// WHY: DELETE + INSERTs en una sola tx para que el reemplazo del set sea
 	// atómico; si un INSERT falla (p.ej. original_id duplicado viola la PK de
 	// package_vuln), el rollback deja el set previo intacto.
@@ -524,7 +524,7 @@ func (s *Store) PutVulns(ctx context.Context, source, queryKey string, vs []magp
 	return nil
 }
 
-func (s *Store) QueryVulns(ctx context.Context, q magpie.VulnQuery) ([]magpie.VulnRecord, int, error) {
+func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.VulnRecord, int, error) {
 	where := ""
 	var args []any
 	if q.ID != "" {
@@ -560,7 +560,7 @@ func (s *Store) QueryVulns(ctx context.Context, q magpie.VulnQuery) ([]magpie.Vu
 	}
 	defer rows.Close()
 
-	var recs []magpie.VulnRecord
+	var recs []collect.VulnRecord
 	for rows.Next() {
 		r, _, err := scanVuln(rows)
 		if err != nil {
@@ -576,8 +576,8 @@ func (s *Store) QueryVulns(ctx context.Context, q magpie.VulnQuery) ([]magpie.Vu
 
 // scanVuln reconstruye un VulnRecord desde la fila actual y devuelve también su
 // fetched_at parseado (para el cálculo de MIN en GetVulns).
-func scanVuln(rows *sql.Rows) (magpie.VulnRecord, time.Time, error) {
-	var r magpie.VulnRecord
+func scanVuln(rows *sql.Rows) (collect.VulnRecord, time.Time, error) {
+	var r collect.VulnRecord
 	var aliases, affected, ranges, fixed, unaffected, payload string
 	var publishedAt, modifiedAt, fetchedAt string
 	if err := rows.Scan(
@@ -585,23 +585,23 @@ func scanVuln(rows *sql.Rows) (magpie.VulnRecord, time.Time, error) {
 		&r.CanonicalID, &aliases, &r.Score, &r.Severity,
 		&affected, &ranges, &fixed, &unaffected,
 		&publishedAt, &modifiedAt, &payload, &fetchedAt); err != nil {
-		return magpie.VulnRecord{}, time.Time{}, fmt.Errorf("scan vuln: %w", err)
+		return collect.VulnRecord{}, time.Time{}, fmt.Errorf("scan vuln: %w", err)
 	}
 
 	if err := unmarshalList(aliases, &r.Aliases); err != nil {
-		return magpie.VulnRecord{}, time.Time{}, err
+		return collect.VulnRecord{}, time.Time{}, err
 	}
 	if err := unmarshalList(affected, &r.AffectedVersions); err != nil {
-		return magpie.VulnRecord{}, time.Time{}, err
+		return collect.VulnRecord{}, time.Time{}, err
 	}
 	if err := unmarshalList(ranges, &r.AffectedRanges); err != nil {
-		return magpie.VulnRecord{}, time.Time{}, err
+		return collect.VulnRecord{}, time.Time{}, err
 	}
 	if err := unmarshalList(fixed, &r.FixedVersions); err != nil {
-		return magpie.VulnRecord{}, time.Time{}, err
+		return collect.VulnRecord{}, time.Time{}, err
 	}
 	if err := unmarshalList(unaffected, &r.UnaffectedVersions); err != nil {
-		return magpie.VulnRecord{}, time.Time{}, err
+		return collect.VulnRecord{}, time.Time{}, err
 	}
 	if payload != "" {
 		r.Payload = json.RawMessage(payload)

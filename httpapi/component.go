@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
@@ -29,7 +29,7 @@ func handleComponent(deps Deps) http.HandlerFunc {
 
 		// WHY: la página de componente lee SOLO de la DB (sin red); FromStore no
 		// invoca fetchers, así que no hay errores de ecosyste.ms/OSV acá.
-		result, err := magpie.FromStore(r.Context(), stripped, deps.Config.Store)
+		result, err := collect.FromStore(r.Context(), stripped, deps.Config.Store)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

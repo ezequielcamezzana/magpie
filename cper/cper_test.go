@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	magpie "github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/match"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
-func acceptOne(t *testing.T, cve *magpie.NVDCVE, names, vendors, osvRanges []string, wantSw, eco string) []magpie.ResolvedCPE {
+func acceptOne(t *testing.T, cve *collect.NVDCVE, names, vendors, osvRanges []string, wantSw, eco string) []collect.ResolvedCPE {
 	t.Helper()
 	osvIntervals, osvOk := match.ParseIntervals(osvRanges)
 	return acceptCPEs(cve, "CVE-2020-1", names, vendors, osvRanges,
@@ -19,7 +19,7 @@ func acceptOne(t *testing.T, cve *magpie.NVDCVE, names, vendors, osvRanges []str
 }
 
 func TestAcceptCPE_NameAndVendor(t *testing.T) {
-	cve := &magpie.NVDCVE{Matches: []magpie.NVDCPEMatch{
+	cve := &collect.NVDCVE{Matches: []collect.NVDCPEMatch{
 		{PartialCPE: "cpe:2.3:a:lodash:lodash", Vendor: "lodash", Product: "lodash",
 			AffectedRanges: []string{"[9.0.0, 9.9.9)"}},
 	}}
@@ -46,7 +46,7 @@ func TestAcceptCPE_NameAndVendor(t *testing.T) {
 
 func TestAcceptCPE_NameAndEcosystem(t *testing.T) {
 	// product matches a name, vendor does NOT, but target_sw pins node.js.
-	cve := &magpie.NVDCVE{Matches: []magpie.NVDCPEMatch{
+	cve := &collect.NVDCVE{Matches: []collect.NVDCPEMatch{
 		{PartialCPE: "cpe:2.3:a:acme:chalk", Vendor: "acme", Product: "chalk", TargetSw: "node.js"},
 	}}
 	got := acceptOne(t, cve, []string{"chalk"}, []string{"npm"}, nil, "node.js", "npm")
@@ -63,7 +63,7 @@ func TestAcceptCPE_NameAndEcosystem(t *testing.T) {
 
 func TestAcceptCPE_RangeSubsetWhenNoName(t *testing.T) {
 	// neither name nor vendor match; OSV ⊆ NVD range bridges it.
-	cve := &magpie.NVDCVE{Matches: []magpie.NVDCPEMatch{
+	cve := &collect.NVDCVE{Matches: []collect.NVDCPEMatch{
 		{PartialCPE: "cpe:2.3:a:other:thing", Vendor: "other", Product: "thing",
 			AffectedRanges: []string{"[1.0.0, 2.0.0)"}},
 	}}
@@ -78,7 +78,7 @@ func TestAcceptCPE_RangeSubsetWhenNoName(t *testing.T) {
 
 func TestAcceptCPE_RejectsUnrelated(t *testing.T) {
 	// Ninguno matchea name/vendor/ecosystem/range.
-	cve := &magpie.NVDCVE{Matches: []magpie.NVDCPEMatch{
+	cve := &collect.NVDCVE{Matches: []collect.NVDCPEMatch{
 		{PartialCPE: "cpe:2.3:a:other:thing", Vendor: "other", Product: "thing",
 			TargetSw: "*", AffectedRanges: []string{"[5.0.0, 6.0.0)"}},
 		{PartialCPE: "cpe:2.3:a:more:stuff", Vendor: "more", Product: "stuff",
@@ -101,63 +101,63 @@ func TestCandidatesFrom(t *testing.T) {
 	}
 }
 
-// fakeStore es un magpie.Store in-memory mínimo: solo cpes y vulns tienen
+// fakeStore es un collect.Store in-memory mínimo: solo cpes y vulns tienen
 // comportamiento real; el resto son no-ops (Run no los toca).
 type fakeStore struct {
-	cpes  map[string]magpie.StoreResult[[]magpie.ResolvedCPE]
-	vulns map[string]magpie.StoreResult[[]magpie.VulnRecord]
+	cpes  map[string]collect.StoreResult[[]collect.ResolvedCPE]
+	vulns map[string]collect.StoreResult[[]collect.VulnRecord]
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		cpes:  map[string]magpie.StoreResult[[]magpie.ResolvedCPE]{},
-		vulns: map[string]magpie.StoreResult[[]magpie.VulnRecord]{},
+		cpes:  map[string]collect.StoreResult[[]collect.ResolvedCPE]{},
+		vulns: map[string]collect.StoreResult[[]collect.VulnRecord]{},
 	}
 }
 
-func (s *fakeStore) GetCPEs(ctx context.Context, spurl string) (magpie.StoreResult[[]magpie.ResolvedCPE], error) {
+func (s *fakeStore) GetCPEs(ctx context.Context, spurl string) (collect.StoreResult[[]collect.ResolvedCPE], error) {
 	return s.cpes[spurl], nil
 }
-func (s *fakeStore) PutCPEs(ctx context.Context, spurl string, cpes []magpie.ResolvedCPE) error {
+func (s *fakeStore) PutCPEs(ctx context.Context, spurl string, cpes []collect.ResolvedCPE) error {
 	if len(cpes) == 0 {
 		return nil
 	}
-	s.cpes[spurl] = magpie.StoreResult[[]magpie.ResolvedCPE]{Value: cpes, FetchedAt: time.Now().UTC(), Found: true}
+	s.cpes[spurl] = collect.StoreResult[[]collect.ResolvedCPE]{Value: cpes, FetchedAt: time.Now().UTC(), Found: true}
 	return nil
 }
-func (s *fakeStore) GetVulns(ctx context.Context, source, queryKey string) (magpie.StoreResult[[]magpie.VulnRecord], error) {
+func (s *fakeStore) GetVulns(ctx context.Context, source, queryKey string) (collect.StoreResult[[]collect.VulnRecord], error) {
 	return s.vulns[source+"|"+queryKey], nil
 }
-func (s *fakeStore) PutVulns(ctx context.Context, source, queryKey string, vs []magpie.VulnRecord) error {
-	s.vulns[source+"|"+queryKey] = magpie.StoreResult[[]magpie.VulnRecord]{Value: vs, Found: true}
+func (s *fakeStore) PutVulns(ctx context.Context, source, queryKey string, vs []collect.VulnRecord) error {
+	s.vulns[source+"|"+queryKey] = collect.StoreResult[[]collect.VulnRecord]{Value: vs, Found: true}
 	return nil
 }
-func (s *fakeStore) GetComponent(context.Context, string) (magpie.StoreResult[magpie.Component], error) {
-	return magpie.StoreResult[magpie.Component]{}, nil
+func (s *fakeStore) GetComponent(context.Context, string) (collect.StoreResult[collect.Component], error) {
+	return collect.StoreResult[collect.Component]{}, nil
 }
-func (s *fakeStore) PutComponent(context.Context, magpie.Component) error { return nil }
-func (s *fakeStore) GetRepository(context.Context, string) (magpie.StoreResult[magpie.Repository], error) {
-	return magpie.StoreResult[magpie.Repository]{}, nil
+func (s *fakeStore) PutComponent(context.Context, collect.Component) error { return nil }
+func (s *fakeStore) GetRepository(context.Context, string) (collect.StoreResult[collect.Repository], error) {
+	return collect.StoreResult[collect.Repository]{}, nil
 }
-func (s *fakeStore) PutRepository(context.Context, magpie.Repository) error { return nil }
-func (s *fakeStore) QueryComponents(context.Context, magpie.ComponentQuery) ([]magpie.Component, int, error) {
+func (s *fakeStore) PutRepository(context.Context, collect.Repository) error { return nil }
+func (s *fakeStore) QueryComponents(context.Context, collect.ComponentQuery) ([]collect.Component, int, error) {
 	return nil, 0, nil
 }
-func (s *fakeStore) QueryCPEs(context.Context, magpie.CPEQuery) ([]magpie.ResolvedCPE, int, error) {
+func (s *fakeStore) QueryCPEs(context.Context, collect.CPEQuery) ([]collect.ResolvedCPE, int, error) {
 	return nil, 0, nil
 }
-func (s *fakeStore) QueryVulns(context.Context, magpie.VulnQuery) ([]magpie.VulnRecord, int, error) {
+func (s *fakeStore) QueryVulns(context.Context, collect.VulnQuery) ([]collect.VulnRecord, int, error) {
 	return nil, 0, nil
 }
 func (s *fakeStore) Close() error { return nil }
 
 // stubNVD registra qué CVEs se le pidieron, además de responder por mapa.
 type stubNVD struct {
-	byCVE map[string]*magpie.NVDCVE
+	byCVE map[string]*collect.NVDCVE
 	asked []string
 }
 
-func (s *stubNVD) FetchCVE(ctx context.Context, cve string) (*magpie.NVDCVE, error) {
+func (s *stubNVD) FetchCVE(ctx context.Context, cve string) (*collect.NVDCVE, error) {
 	s.asked = append(s.asked, cve)
 	return s.byCVE[cve], nil
 }
@@ -176,15 +176,15 @@ func identityFor(t *testing.T, coord string) purl.Identity {
 func TestRunResolvesCPE(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
-	cfg := magpie.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
-	records := []magpie.VulnRecord{{
-		Source: magpie.SourceEcosystems, QueryKey: spurl, OriginalID: "GHSA-x",
+	cfg := collect.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
+	records := []collect.VulnRecord{{
+		Source: collect.SourceEcosystems, QueryKey: spurl, OriginalID: "GHSA-x",
 		Aliases: []string{"CVE-2021-23337"}, AffectedRanges: []string{"[*, 4.17.21)"},
 	}}
-	fetcher := &stubNVD{byCVE: map[string]*magpie.NVDCVE{
+	fetcher := &stubNVD{byCVE: map[string]*collect.NVDCVE{
 		"CVE-2021-23337": {
 			ID: "CVE-2021-23337", Score: 7.2, Severity: "HIGH",
-			Matches: []magpie.NVDCPEMatch{{
+			Matches: []collect.NVDCPEMatch{{
 				PartialCPE: "cpe:2.3:a:lodash:lodash", Vendor: "lodash", Product: "lodash",
 				TargetSw: "node.js", AffectedRanges: []string{"[*, 4.17.21)"}, FixedVersions: []string{"4.17.21"},
 			}},
@@ -209,7 +209,7 @@ func TestRunResolvesCPE(t *testing.T) {
 		t.Errorf("matchedBy = %v", cpe.MatchedBy)
 	}
 
-	vulns, _ := st.GetVulns(context.Background(), magpie.SourceNVD, spurl)
+	vulns, _ := st.GetVulns(context.Background(), collect.SourceNVD, spurl)
 	if !vulns.Found || len(vulns.Value) != 1 {
 		t.Fatalf("want 1 nvd record persisted, got %+v", vulns)
 	}
@@ -222,11 +222,11 @@ func TestRunResolvesCPE(t *testing.T) {
 func TestRunFreshCPEsShortCircuit(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
-	_ = st.PutCPEs(context.Background(), spurl, []magpie.ResolvedCPE{{CPE: "cpe:2.3:a:lodash:lodash"}})
+	_ = st.PutCPEs(context.Background(), spurl, []collect.ResolvedCPE{{CPE: "cpe:2.3:a:lodash:lodash"}})
 
 	fetcher := &stubNVD{}
-	cfg := magpie.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
-	records := []magpie.VulnRecord{{OriginalID: "CVE-2021-23337"}}
+	cfg := collect.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
+	records := []collect.VulnRecord{{OriginalID: "CVE-2021-23337"}}
 	Run(context.Background(), fetcher, cfg, identityFor(t, spurl), spurl, "", records, time.Now().UTC())
 
 	if len(fetcher.asked) != 0 {
@@ -240,14 +240,14 @@ func TestRunFreshCPEsShortCircuit(t *testing.T) {
 func TestRunSkipsDistro(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:deb/debian/curl"
-	cfg := magpie.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
-	records := []magpie.VulnRecord{{
+	cfg := collect.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
+	records := []collect.VulnRecord{{
 		OriginalID: "CVE-2023-38545", AffectedRanges: []string{"[*, 8.4.0)"},
 	}}
-	fetcher := &stubNVD{byCVE: map[string]*magpie.NVDCVE{
+	fetcher := &stubNVD{byCVE: map[string]*collect.NVDCVE{
 		"CVE-2023-38545": {
 			ID: "CVE-2023-38545", Score: 9.8, Severity: "CRITICAL",
-			Matches: []magpie.NVDCPEMatch{{
+			Matches: []collect.NVDCPEMatch{{
 				PartialCPE: "cpe:2.3:a:curl:curl", Vendor: "curl", Product: "curl",
 				AffectedRanges: []string{"[*, 8.4.0)"}, FixedVersions: []string{"8.4.0"},
 			}},
@@ -271,15 +271,15 @@ func TestRunSkipsDistro(t *testing.T) {
 func TestRunPicksMostRecentlyPublished(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
-	cfg := magpie.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
+	cfg := collect.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
 
 	// 7 CVEs en orden de aparición 2010..2016, Published creciente: los 5 más
 	// nuevos son los ÚLTIMOS de la lista (2012..2016). El más viejo (2010) trae
 	// el Modified más reciente de todos — igual queda afuera.
 	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	var records []magpie.VulnRecord
+	var records []collect.VulnRecord
 	for i := 0; i < 7; i++ {
-		records = append(records, magpie.VulnRecord{
+		records = append(records, collect.VulnRecord{
 			OriginalID: fmt.Sprintf("CVE-%d-1", 2010+i),
 			Published:  base.AddDate(0, 0, i),
 			Modified:   base.AddDate(0, 0, 7-i),

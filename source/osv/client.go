@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	magpie "github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 	gocvss30 "github.com/pandatix/go-cvss/30"
 	gocvss31 "github.com/pandatix/go-cvss/31"
@@ -38,17 +38,17 @@ func New(httpc *http.Client, logger *slog.Logger) *Client {
 	return &Client{httpc: httpc, logger: logger, BaseURL: defaultBaseURL}
 }
 
-// WHY: magpie.Collect no puede importar este package (ciclo), así que registra
+// WHY: collect.Collect no puede importar este package (ciclo), así que registra
 // su constructor como el fetcher real de stage 2.
 func init() {
-	magpie.RegisterOSVFetcher(func(httpc *http.Client, logger *slog.Logger) magpie.OSVFetcher {
+	collect.RegisterOSVFetcher(func(httpc *http.Client, logger *slog.Logger) collect.OSVFetcher {
 		return New(httpc, logger)
 	})
 }
 
 // Query looks up vulnerabilities for an OSV query. The strategy depends on
 // q.Kind; Language and Linux share the same POST query, GitHub is pending.
-func (c *Client) Query(ctx context.Context, q purl.OSVQuery) ([]magpie.VulnRecord, error) {
+func (c *Client) Query(ctx context.Context, q purl.OSVQuery) ([]collect.VulnRecord, error) {
 	switch q.Kind {
 	case purl.KindLanguage:
 		return c.query(ctx, q)
@@ -60,7 +60,7 @@ func (c *Client) Query(ctx context.Context, q purl.OSVQuery) ([]magpie.VulnRecor
 	return nil, nil
 }
 
-func (c *Client) query(ctx context.Context, q purl.OSVQuery) ([]magpie.VulnRecord, error) {
+func (c *Client) query(ctx context.Context, q purl.OSVQuery) ([]collect.VulnRecord, error) {
 	return c.queryBody(ctx, q, map[string]any{
 		"package": map[string]string{"ecosystem": q.Ecosystem, "name": q.Name},
 	})
@@ -69,13 +69,13 @@ func (c *Client) query(ctx context.Context, q purl.OSVQuery) ([]magpie.VulnRecor
 // queryGit looks up vulns against the OSV GIT ecosystem, keyed by repo URL. The
 // GIT path carries the repo in the affected ranges, so selection filters by repo
 // instead of package name.
-func (c *Client) queryGit(ctx context.Context, q purl.OSVQuery) ([]magpie.VulnRecord, error) {
+func (c *Client) queryGit(ctx context.Context, q purl.OSVQuery) ([]collect.VulnRecord, error) {
 	return c.queryBody(ctx, q, map[string]any{
 		"package": map[string]string{"ecosystem": "GIT", "name": q.RepoURL},
 	})
 }
 
-func (c *Client) queryBody(ctx context.Context, q purl.OSVQuery, body map[string]any) ([]magpie.VulnRecord, error) {
+func (c *Client) queryBody(ctx context.Context, q purl.OSVQuery, body map[string]any) ([]collect.VulnRecord, error) {
 	reqBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -111,7 +111,7 @@ func (c *Client) queryBody(ctx context.Context, q purl.OSVQuery, body map[string
 	// TODO: pagination — handle next_page_token if present.
 
 	queryKey := queryKey(q)
-	out := make([]magpie.VulnRecord, 0, len(envelope.Vulns))
+	out := make([]collect.VulnRecord, 0, len(envelope.Vulns))
 	for _, payload := range envelope.Vulns {
 		var v rawVuln
 		if err := json.Unmarshal(payload, &v); err != nil {
@@ -158,7 +158,7 @@ func mergeUnique(a, b []string) []string {
 	return out
 }
 
-func mapVuln(v *rawVuln, payload json.RawMessage, q purl.OSVQuery, queryKey string) magpie.VulnRecord {
+func mapVuln(v *rawVuln, payload json.RawMessage, q purl.OSVQuery, queryKey string) collect.VulnRecord {
 	var published, modified time.Time
 	if v.Published != "" {
 		published, _ = time.Parse(time.RFC3339, v.Published)
@@ -169,8 +169,8 @@ func mapVuln(v *rawVuln, payload json.RawMessage, q purl.OSVQuery, queryKey stri
 
 	score := deriveScore(v.Severity)
 
-	rec := magpie.VulnRecord{
-		Source:     magpie.SourceOSV,
+	rec := collect.VulnRecord{
+		Source:     collect.SourceOSV,
 		QueryKey:   queryKey,
 		OriginalID: v.ID,
 		Aliases:    mergeUnique(v.Aliases, v.Upstream),

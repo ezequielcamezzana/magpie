@@ -1,4 +1,4 @@
-package magpie
+package collect
 
 import (
 	"net/http"

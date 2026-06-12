@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ezequielcamezzana/magpie"
 	"github.com/ezequielcamezzana/magpie/httpapi"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/source/ecosystems"
 	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
@@ -56,7 +56,7 @@ func fakeUpstream(t *testing.T, calls *int64) *httptest.Server {
 // fake y restaura el stub de api_test.go al terminar.
 func useRealEcosystems(t *testing.T, upstreamURL string) {
 	t.Helper()
-	magpie.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) magpie.EcosystemsFetcher {
+	collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
 		c := ecosystems.New(httpc, logger)
 		// BaseURL se concatena con "{registry}/packages/{name}", por eso el
 		// trailing slash deja la URL final en /{registry}/packages/{name}.
@@ -64,17 +64,17 @@ func useRealEcosystems(t *testing.T, upstreamURL string) {
 		return c
 	})
 	t.Cleanup(func() {
-		magpie.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) magpie.EcosystemsFetcher {
+		collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
 			return stubFetcher{}
 		})
 	})
 }
 
-func newE2EServer(t *testing.T, db magpie.Store, maxAge time.Duration) *httptest.Server {
+func newE2EServer(t *testing.T, db collect.Store, maxAge time.Duration) *httptest.Server {
 	t.Helper()
 	r := chi.NewRouter()
 	httpapi.Mount(r, httpapi.Deps{
-		Config: magpie.Config{Store: db, MaxAge: maxAge},
+		Config: collect.Config{Store: db, MaxAge: maxAge},
 		Logger: slog.Default(),
 	})
 	srv := httptest.NewServer(r)
@@ -82,7 +82,7 @@ func newE2EServer(t *testing.T, db magpie.Store, maxAge time.Duration) *httptest
 	return srv
 }
 
-func openMemStore(t *testing.T) magpie.Store {
+func openMemStore(t *testing.T) collect.Store {
 	t.Helper()
 	db, err := sqlite.Open(":memory:")
 	if err != nil {
@@ -107,7 +107,7 @@ func TestE2ECollectChalk(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var res magpie.Result
+	var res collect.Result
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestE2ECollectMinimist(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var res magpie.Result
+	var res collect.Result
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestE2ECollectMinimist(t *testing.T) {
 	}
 
 	// Stage 1 persiste las vulns crudas aunque Groups todavía no las muestre.
-	got, err := db.GetVulns(context.Background(), magpie.SourceEcosystems, "pkg:npm/minimist")
+	got, err := db.GetVulns(context.Background(), collect.SourceEcosystems, "pkg:npm/minimist")
 	if err != nil {
 		t.Fatalf("GetVulns: %v", err)
 	}

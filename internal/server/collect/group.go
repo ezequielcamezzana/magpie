@@ -1,6 +1,6 @@
-// Canonical grouping puro (DD §5): agrupa VulnRecords por canonical ID
-// derivado. Sin I/O, determinístico, reusable por Collect y read paths.
-package magpie
+// Pure canonical grouping (DD §5): groups VulnRecords by derived canonical
+// ID. No I/O, deterministic, reusable by Collect and read paths.
+package collect
 
 import (
 	"regexp"
@@ -9,13 +9,13 @@ import (
 
 var cveRe = regexp.MustCompile(`(?i)^CVE-(\d{4})-(\d+)$`)
 
-// IsCVE reporta si id tiene forma de CVE ("CVE-YYYY-NNNN").
+// IsCVE reports whether id has CVE shape ("CVE-YYYY-NNNN").
 func IsCVE(id string) bool {
 	return cveRe.MatchString(id)
 }
 
-// pickNewestCVE devuelve el CVE más nuevo de la lista (año desc, luego número
-// desc), o "" si no hay ninguno.
+// pickNewestCVE returns the newest CVE in the list (year desc, then number
+// desc), or "" if there is none.
 func pickNewestCVE(ids []string) string {
 	best := ""
 	bestYear, bestNum := 0, 0
@@ -24,8 +24,8 @@ func pickNewestCVE(ids []string) string {
 		if m == nil {
 			continue
 		}
-		// WHY: comparación entera del número (no lexicográfica), si no
-		// "CVE-2020-9999" ganaría a "CVE-2020-10000" al comparar como string.
+		// WHY: integer comparison of the number (not lexicographic), otherwise
+		// "CVE-2020-9999" would beat "CVE-2020-10000" when compared as strings.
 		year, _ := strconv.Atoi(m[1])
 		num, _ := strconv.Atoi(m[2])
 		if best == "" || year > bestYear || (year == bestYear && num > bestNum) {
@@ -35,23 +35,23 @@ func pickNewestCVE(ids []string) string {
 	return best
 }
 
-// CanonicalIDFor deriva el canonical de un record: el CVE más nuevo entre
-// OriginalID+Aliases si existe, si no el propio OriginalID. Group la usa
-// internamente; Collect la usa para stampear la columna canonical_id por record.
+// CanonicalIDFor derives a record's canonical: the newest CVE among
+// OriginalID+Aliases if any, otherwise OriginalID itself. Group uses it
+// internally; Collect uses it to stamp the per-record canonical_id column.
 func CanonicalIDFor(r VulnRecord) string {
 	ids := make([]string, 0, len(r.Aliases)+1)
 	ids = append(ids, r.OriginalID)
 	ids = append(ids, r.Aliases...)
-	// TODO: el DD §5 menciona el campo upstream de OSV; no lo persistimos como
-	// campo (queda en Payload). OriginalID+Aliases cubre OSV/NVD/ecosyste.ms.
+	// TODO: DD §5 mentions OSV's upstream field; we don't persist it as a
+	// field (it stays in Payload). OriginalID+Aliases covers OSV/NVD/ecosyste.ms.
 	if cve := pickNewestCVE(ids); cve != "" {
 		return cve
 	}
 	return r.OriginalID
 }
 
-// Group agrupa records por canonical ID. El orden de los grupos sigue la
-// primera aparición del canonical en la entrada (estable, no reordena).
+// Group groups records by canonical ID. Group order follows the first
+// appearance of the canonical in the input (stable, no reordering).
 func Group(records []VulnRecord) []CanonicalGroup {
 	index := make(map[string]int)
 	var groups []CanonicalGroup

@@ -1,8 +1,10 @@
-package magpie
+package collect
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPickNewestCVE(t *testing.T) {
@@ -20,9 +22,7 @@ func TestPickNewestCVE(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := pickNewestCVE(tt.ids); got != tt.want {
-				t.Errorf("pickNewestCVE(%v) = %q, want %q", tt.ids, got, tt.want)
-			}
+			assert.Equal(t, tt.want, pickNewestCVE(tt.ids))
 		})
 	}
 }
@@ -32,12 +32,8 @@ func TestGroupCanonicalFromAliases(t *testing.T) {
 		{Source: SourceOSV, OriginalID: "GHSA-x", Aliases: []string{"CVE-2020-1"}},
 	}
 	groups := Group(recs)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(groups))
-	}
-	if groups[0].CanonicalID != "CVE-2020-1" {
-		t.Errorf("canonical = %q, want CVE-2020-1", groups[0].CanonicalID)
-	}
+	require.Len(t, groups, 1)
+	assert.Equal(t, "CVE-2020-1", groups[0].CanonicalID)
 }
 
 func TestGroupCanonicalNoCVE(t *testing.T) {
@@ -45,12 +41,8 @@ func TestGroupCanonicalNoCVE(t *testing.T) {
 		{Source: SourceOSV, OriginalID: "MAL-2024-1", Aliases: []string{"GHSA-y"}},
 	}
 	groups := Group(recs)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(groups))
-	}
-	if groups[0].CanonicalID != "MAL-2024-1" {
-		t.Errorf("canonical = %q, want MAL-2024-1", groups[0].CanonicalID)
-	}
+	require.Len(t, groups, 1)
+	assert.Equal(t, "MAL-2024-1", groups[0].CanonicalID)
 }
 
 func TestGroupSharedCVEMerges(t *testing.T) {
@@ -59,15 +51,9 @@ func TestGroupSharedCVEMerges(t *testing.T) {
 		{Source: SourceNVD, OriginalID: "CVE-2020-1"},
 	}
 	groups := Group(recs)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(groups))
-	}
-	if groups[0].CanonicalID != "CVE-2020-1" {
-		t.Errorf("canonical = %q, want CVE-2020-1", groups[0].CanonicalID)
-	}
-	if len(groups[0].Records) != 2 {
-		t.Errorf("expected 2 records, got %d", len(groups[0].Records))
-	}
+	require.Len(t, groups, 1)
+	assert.Equal(t, "CVE-2020-1", groups[0].CanonicalID)
+	assert.Len(t, groups[0].Records, 2)
 }
 
 func TestGroupMultipleCVEsNewestWins(t *testing.T) {
@@ -75,12 +61,8 @@ func TestGroupMultipleCVEsNewestWins(t *testing.T) {
 		{Source: SourceOSV, OriginalID: "GHSA-x", Aliases: []string{"CVE-2018-5", "CVE-2022-9"}},
 	}
 	groups := Group(recs)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(groups))
-	}
-	if groups[0].CanonicalID != "CVE-2022-9" {
-		t.Errorf("canonical = %q, want CVE-2022-9", groups[0].CanonicalID)
-	}
+	require.Len(t, groups, 1)
+	assert.Equal(t, "CVE-2022-9", groups[0].CanonicalID)
 }
 
 func TestGroupMaxScore(t *testing.T) {
@@ -90,15 +72,9 @@ func TestGroupMaxScore(t *testing.T) {
 		{Source: SourceCPER, OriginalID: "GHSA-b", Aliases: []string{"CVE-2020-1"}, Score: 0},
 	}
 	groups := Group(recs)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(groups))
-	}
-	if groups[0].MaxScore != 9.8 {
-		t.Errorf("MaxScore = %v, want 9.8", groups[0].MaxScore)
-	}
-	if len(groups[0].Records) != 3 {
-		t.Errorf("expected 3 records retained, got %d", len(groups[0].Records))
-	}
+	require.Len(t, groups, 1)
+	assert.Equal(t, 9.8, groups[0].MaxScore)
+	assert.Len(t, groups[0].Records, 3)
 }
 
 func TestGroupDeterministic(t *testing.T) {
@@ -110,17 +86,11 @@ func TestGroupDeterministic(t *testing.T) {
 	}
 	g1 := Group(recs)
 	g2 := Group(recs)
-	if !reflect.DeepEqual(g1, g2) {
-		t.Errorf("Group not deterministic:\n%#v\n%#v", g1, g2)
-	}
+	assert.Equal(t, g1, g2, "Group not deterministic")
 	// first-appearance order: CVE-2021-2, CVE-2020-1, MAL-2024-1
 	want := []string{"CVE-2021-2", "CVE-2020-1", "MAL-2024-1"}
-	if len(g1) != len(want) {
-		t.Fatalf("expected %d groups, got %d", len(want), len(g1))
-	}
+	require.Len(t, g1, len(want))
 	for i, w := range want {
-		if g1[i].CanonicalID != w {
-			t.Errorf("group[%d] = %q, want %q", i, g1[i].CanonicalID, w)
-		}
+		assert.Equal(t, w, g1[i].CanonicalID, "group[%d]", i)
 	}
 }

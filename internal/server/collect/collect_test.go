@@ -1,4 +1,4 @@
-package magpie
+package collect
 
 import (
 	"context"
@@ -8,6 +8,9 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
@@ -28,7 +31,7 @@ func (f *stubFetcher) Fetch(ctx context.Context, spurl string) (Component, *Repo
 	return f.comp, f.repo, f.vulns, nil
 }
 
-// stubOSV es un OSVFetcher de test que devuelve records fijos.
+// stubOSV is a test OSVFetcher that returns fixed records.
 type stubOSV struct {
 	records []VulnRecord
 	err     error
@@ -38,8 +41,8 @@ func (s stubOSV) Query(ctx context.Context, q purl.OSVQuery) ([]VulnRecord, erro
 	return s.records, s.err
 }
 
-// registerOSV instala un OSVFetcher para la duración del test, restaurando el
-// no-op por defecto al terminar.
+// registerOSV installs an OSVFetcher for the duration of the test, restoring
+// the default no-op when done.
 func registerOSV(t *testing.T, f OSVFetcher) {
 	t.Helper()
 	RegisterOSVFetcher(func(*http.Client, *slog.Logger) OSVFetcher { return f })
@@ -49,8 +52,8 @@ func registerOSV(t *testing.T, f OSVFetcher) {
 }
 
 func TestMain(m *testing.M) {
-	// Default: stage 1 stub + no-op OSV, así los tests que esperan Errors vacío
-	// no fallan por el "not registered" de stage 2.
+	// Default: stage 1 stub + no-op OSV, so tests expecting empty Errors don't
+	// fail on stage 2's "not registered".
 	RegisterEcosystemsFetcher(func(*http.Client, *slog.Logger) EcosystemsFetcher {
 		return &stubFetcher{comp: Component{Name: "x"}}
 	})
@@ -60,8 +63,8 @@ func TestMain(m *testing.M) {
 
 // fakeStore is an in-memory Store for tests.
 //
-// WHY: el Store real (store/sqlite) importa este package magpie, así que un
-// test in-package que lo importara crearía un ciclo. El fake vive acá.
+// WHY: the real Store (store/sqlite) imports this package, so an in-package
+// test importing it would create a cycle. The fake lives here.
 type fakeStore struct {
 	comps map[string]StoreResult[Component]
 	repos map[string]StoreResult[Repository]
@@ -124,7 +127,7 @@ func (s *fakeStore) QueryCPEs(ctx context.Context, q CPEQuery) ([]ResolvedCPE, i
 }
 func (s *fakeStore) Close() error { return nil }
 
-// registerEco instala un EcosystemsFetcher para la duración del test.
+// registerEco installs an EcosystemsFetcher for the duration of the test.
 func registerEco(t *testing.T, f EcosystemsFetcher) {
 	t.Helper()
 	RegisterEcosystemsFetcher(func(*http.Client, *slog.Logger) EcosystemsFetcher { return f })
@@ -137,19 +140,13 @@ func registerEco(t *testing.T, f EcosystemsFetcher) {
 
 func TestCollectInvalidCoord(t *testing.T) {
 	res, err := Collect(context.Background(), "not-a-purl", Config{Store: newFakeStore()})
-	if err == nil {
-		t.Fatal("want error for invalid coord, got nil")
-	}
-	if res != nil {
-		t.Fatalf("want nil result, got %+v", res)
-	}
+	require.Error(t, err)
+	assert.Nil(t, res)
 }
 
 func TestCollectNilStore(t *testing.T) {
 	_, err := Collect(context.Background(), "pkg:npm/lodash@4.17.21", Config{})
-	if err == nil {
-		t.Fatal("want error for nil store, got nil")
-	}
+	require.Error(t, err)
 }
 
 func TestCollectStage1CacheMiss(t *testing.T) {
@@ -163,20 +160,14 @@ func TestCollectStage1CacheMiss(t *testing.T) {
 
 	now := time.Now().UTC()
 	res, errs := collectStage1(context.Background(), f, st, spurl, 24*time.Hour, now)
-	if len(errs) != 0 {
-		t.Fatalf("want no errors, got %+v", errs)
-	}
-	if f.calls != 1 {
-		t.Fatalf("want fetcher called once, got %d", f.calls)
-	}
-	if res.Component == nil || res.Component.Name != "lodash" {
-		t.Fatalf("want component lodash, got %+v", res.Component)
-	}
+	require.Empty(t, errs)
+	assert.Equal(t, 1, f.calls)
+	require.NotNil(t, res.Component)
+	assert.Equal(t, "lodash", res.Component.Name)
 
 	got, _ := st.GetComponent(context.Background(), spurl)
-	if !got.Found || got.Value.Name != "lodash" {
-		t.Fatalf("component not persisted: %+v", got)
-	}
+	require.True(t, got.Found, "component not persisted")
+	assert.Equal(t, "lodash", got.Value.Name)
 }
 
 func TestCollectStage1CacheHit(t *testing.T) {
@@ -191,18 +182,12 @@ func TestCollectStage1CacheHit(t *testing.T) {
 
 	f := &stubFetcher{}
 	res, errs := collectStage1(ctx, f, st, spurl, 24*time.Hour, now)
-	if len(errs) != 0 {
-		t.Fatalf("want no errors, got %+v", errs)
-	}
-	if f.calls != 0 {
-		t.Fatalf("want fetcher not called, got %d", f.calls)
-	}
-	if res.Component == nil || res.Component.Name != "lodash" {
-		t.Fatalf("want component from cache, got %+v", res.Component)
-	}
-	if res.Repository == nil || res.Repository.Stars != 100 {
-		t.Fatalf("want repository from cache, got %+v", res.Repository)
-	}
+	require.Empty(t, errs)
+	assert.Equal(t, 0, f.calls, "want fetcher not called")
+	require.NotNil(t, res.Component)
+	assert.Equal(t, "lodash", res.Component.Name)
+	require.NotNil(t, res.Repository)
+	assert.Equal(t, 100, res.Repository.Stars)
 }
 
 func TestCollectStage1MaxAgeZeroRefetch(t *testing.T) {
@@ -215,12 +200,8 @@ func TestCollectStage1MaxAgeZeroRefetch(t *testing.T) {
 
 	f := &stubFetcher{comp: Component{SPURL: spurl, Name: "lodash"}}
 	_, errs := collectStage1(ctx, f, st, spurl, 0, now)
-	if len(errs) != 0 {
-		t.Fatalf("want no errors, got %+v", errs)
-	}
-	if f.calls != 1 {
-		t.Fatalf("want fetcher called once (MaxAge=0 always refetch), got %d", f.calls)
-	}
+	require.Empty(t, errs)
+	assert.Equal(t, 1, f.calls, "MaxAge=0 always refetches")
 }
 
 func TestCollectStage1StaleRefetch(t *testing.T) {
@@ -233,12 +214,8 @@ func TestCollectStage1StaleRefetch(t *testing.T) {
 
 	f := &stubFetcher{comp: Component{SPURL: spurl, Name: "lodash"}}
 	_, errs := collectStage1(ctx, f, st, spurl, 24*time.Hour, now)
-	if len(errs) != 0 {
-		t.Fatalf("want no errors, got %+v", errs)
-	}
-	if f.calls != 1 {
-		t.Fatalf("want fetcher called once (stale), got %d", f.calls)
-	}
+	require.Empty(t, errs)
+	assert.Equal(t, 1, f.calls, "stale entry must refetch")
 }
 
 func TestCollectStage1FetchErrorNotFatal(t *testing.T) {
@@ -247,14 +224,9 @@ func TestCollectStage1FetchErrorNotFatal(t *testing.T) {
 	now := time.Now().UTC()
 
 	f := &stubFetcher{err: errors.New("boom")}
-	res, errs := collectStage1(context.Background(), f, st, spurl, 24*time.Hour, now)
-	if len(errs) != 1 {
-		t.Fatalf("want 1 source error, got %+v", errs)
-	}
-	if errs[0].Source != SourceEcosystems {
-		t.Fatalf("want source %q, got %q", SourceEcosystems, errs[0].Source)
-	}
-	_ = res
+	_, errs := collectStage1(context.Background(), f, st, spurl, 24*time.Hour, now)
+	require.Len(t, errs, 1)
+	assert.Equal(t, SourceEcosystems, errs[0].Source)
 }
 
 func TestCollectStage2Matching(t *testing.T) {
@@ -267,25 +239,13 @@ func TestCollectStage2Matching(t *testing.T) {
 	}}})
 
 	res, err := Collect(context.Background(), "pkg:npm/x@5.0.0", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Errors) != 0 {
-		t.Fatalf("want no errors, got %+v", res.Errors)
-	}
-	if len(res.Groups) != 1 {
-		t.Fatalf("want 1 group, got %d", len(res.Groups))
-	}
+	require.NoError(t, err)
+	require.Empty(t, res.Errors)
+	require.Len(t, res.Groups, 1)
 	g := res.Groups[0]
-	if !g.Affected {
-		t.Fatal("want group Affected=true")
-	}
-	if len(g.Members) != 1 {
-		t.Fatalf("want 1 member, got %d", len(g.Members))
-	}
-	if g.Members[0].Verdict.Reason != ReasonInAffectedRange {
-		t.Fatalf("Reason = %q, want %q", g.Members[0].Verdict.Reason, ReasonInAffectedRange)
-	}
+	assert.True(t, g.Affected)
+	require.Len(t, g.Members, 1)
+	assert.Equal(t, ReasonInAffectedRange, g.Members[0].Verdict.Reason)
 }
 
 func TestCollectNoVersionMatchesAll(t *testing.T) {
@@ -298,23 +258,13 @@ func TestCollectNoVersionMatchesAll(t *testing.T) {
 	}}})
 
 	res, err := Collect(context.Background(), "pkg:npm/x", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Groups) != 1 {
-		t.Fatalf("want 1 group, got %d", len(res.Groups))
-	}
+	require.NoError(t, err)
+	require.Len(t, res.Groups, 1)
 	g := res.Groups[0]
-	if !g.Affected {
-		t.Fatal("want group Affected=true")
-	}
+	assert.True(t, g.Affected)
 	for _, m := range g.Members {
-		if !m.Verdict.Matched {
-			t.Fatalf("want all members matched, got %+v", m.Verdict)
-		}
-		if m.Verdict.Reason != ReasonNoVersionSpecified {
-			t.Fatalf("Reason = %q, want %q", m.Verdict.Reason, ReasonNoVersionSpecified)
-		}
+		assert.True(t, m.Verdict.Matched, "want all members matched, got %+v", m.Verdict)
+		assert.Equal(t, ReasonNoVersionSpecified, m.Verdict.Reason)
 	}
 }
 
@@ -328,19 +278,11 @@ func TestCollectVersionNotAffected(t *testing.T) {
 	}}})
 
 	res, err := Collect(context.Background(), "pkg:npm/x@7.0.0", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Groups) != 1 {
-		t.Fatalf("want 1 group, got %d", len(res.Groups))
-	}
+	require.NoError(t, err)
+	require.Len(t, res.Groups, 1)
 	g := res.Groups[0]
-	if g.Affected {
-		t.Fatal("want group Affected=false")
-	}
-	if g.Members[0].Verdict.Reason != ReasonNotInAffectedRange {
-		t.Fatalf("Reason = %q, want %q", g.Members[0].Verdict.Reason, ReasonNotInAffectedRange)
-	}
+	assert.False(t, g.Affected)
+	assert.Equal(t, ReasonNotInAffectedRange, g.Members[0].Verdict.Reason)
 }
 
 func TestCollectSyntheticComponentGitHub(t *testing.T) {
@@ -352,78 +294,57 @@ func TestCollectSyntheticComponentGitHub(t *testing.T) {
 	}}})
 
 	res, err := Collect(context.Background(), "pkg:github/curl/curl", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Component == nil {
-		t.Fatal("want synthetic component, got nil")
-	}
-	if res.Component.Name != "curl" {
-		t.Fatalf("Name = %q, want curl", res.Component.Name)
-	}
-	if res.Component.RepoURL != "https://github.com/curl/curl" {
-		t.Fatalf("RepoURL = %q, want https://github.com/curl/curl", res.Component.RepoURL)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, res.Component, "want synthetic component")
+	assert.Equal(t, "curl", res.Component.Name)
+	assert.Equal(t, "https://github.com/curl/curl", res.Component.RepoURL)
 
 	got, _ := st.GetComponent(context.Background(), spurl)
-	if !got.Found || got.Value.Name != "curl" {
-		t.Fatalf("synthetic component not persisted: %+v", got)
-	}
+	require.True(t, got.Found, "synthetic component not persisted")
+	assert.Equal(t, "curl", got.Value.Name)
 }
 
 func TestCollectStampsAffectedPackageWhenEmpty(t *testing.T) {
 	st := newFakeStore()
 	registerEco(t, &stubFetcher{err: ErrSourceNotApplicable})
-	// OSV-GIT viene con package vacío (AffectedPackage == "").
+	// OSV-GIT comes with an empty package (AffectedPackage == "").
 	registerOSV(t, stubOSV{records: []VulnRecord{
 		{Source: SourceOSV, OriginalID: "CVE-2023-1"},
 		{Source: SourceOSV, OriginalID: "CVE-2023-2"},
 	}})
 
 	res, err := Collect(context.Background(), "pkg:github/curl/curl", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	var seen int
 	for _, g := range res.Groups {
 		for _, m := range g.Members {
 			seen++
-			if m.Record.AffectedPackage != "pkg:github/curl/curl" {
-				t.Fatalf("AffectedPackage = %q, want pkg:github/curl/curl", m.Record.AffectedPackage)
-			}
+			assert.Equal(t, "pkg:github/curl/curl", m.Record.AffectedPackage)
 		}
 	}
-	if seen == 0 {
-		t.Fatal("want at least one vuln member")
-	}
+	require.NotZero(t, seen, "want at least one vuln member")
 }
 
 func TestCollectPreservesAffectedPackageFromOSV(t *testing.T) {
 	st := newFakeStore()
 	registerEco(t, &stubFetcher{err: ErrSourceNotApplicable})
-	// OSV sí reporta un purl: se conserva, no se pisa con el spurl.
+	// OSV does report a purl: it is preserved, not overwritten with the spurl.
 	registerOSV(t, stubOSV{records: []VulnRecord{
 		{Source: SourceOSV, OriginalID: "CVE-2023-1", AffectedPackage: "pkg:generic/curl"},
 	}})
 
 	res, err := Collect(context.Background(), "pkg:github/curl/curl", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	var seen int
 	for _, g := range res.Groups {
 		for _, m := range g.Members {
 			seen++
-			if m.Record.AffectedPackage != "pkg:generic/curl" {
-				t.Fatalf("AffectedPackage = %q, want pkg:generic/curl", m.Record.AffectedPackage)
-			}
+			assert.Equal(t, "pkg:generic/curl", m.Record.AffectedPackage)
 		}
 	}
-	if seen == 0 {
-		t.Fatal("want at least one vuln member")
-	}
+	require.NotZero(t, seen, "want at least one vuln member")
 }
 
 func TestCollectNoSynthWithoutVulns(t *testing.T) {
@@ -432,16 +353,10 @@ func TestCollectNoSynthWithoutVulns(t *testing.T) {
 	registerOSV(t, stubOSV{})
 
 	res, err := Collect(context.Background(), "pkg:github/curl/curl", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Component != nil {
-		t.Fatalf("want nil component (no vulns), got %+v", res.Component)
-	}
+	require.NoError(t, err)
+	assert.Nil(t, res.Component, "want nil component (no vulns)")
 	got, _ := st.GetComponent(context.Background(), "pkg:github/curl/curl")
-	if got.Found {
-		t.Fatalf("want nothing persisted, got %+v", got)
-	}
+	assert.False(t, got.Found, "want nothing persisted")
 }
 
 func TestCollectRealComponentNotOverwritten(t *testing.T) {
@@ -450,21 +365,16 @@ func TestCollectRealComponentNotOverwritten(t *testing.T) {
 	registerOSV(t, stubOSV{records: []VulnRecord{{Source: SourceOSV, OriginalID: "CVE-2020-1"}}})
 
 	res, err := Collect(context.Background(), "pkg:npm/x@1.0.0", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Component == nil || res.Component.Name != "x" {
-		t.Fatalf("want real component x, got %+v", res.Component)
-	}
-	if res.Component.RepoURL != "https://github.com/x/x" {
-		t.Fatalf("RepoURL = %q, want real repo url", res.Component.RepoURL)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, res.Component)
+	assert.Equal(t, "x", res.Component.Name)
+	assert.Equal(t, "https://github.com/x/x", res.Component.RepoURL)
 }
 
 func TestCollectGroupsByCanonical(t *testing.T) {
 	st := newFakeStore()
-	// ecosystems devuelve un record con el CVE en Aliases; osv devuelve otro con
-	// el CVE como OriginalID → mismo canonical → 1 grupo, 2 members.
+	// ecosystems returns a record with the CVE in Aliases; osv returns another
+	// with the CVE as OriginalID → same canonical → 1 group, 2 members.
 	registerEco(t, &stubFetcher{
 		comp:  Component{SPURL: "pkg:npm/x", Name: "x"},
 		vulns: []VulnRecord{{Source: SourceEcosystems, OriginalID: "GHSA-x", Aliases: []string{"CVE-2020-1"}}},
@@ -474,21 +384,13 @@ func TestCollectGroupsByCanonical(t *testing.T) {
 	}}})
 
 	res, err := Collect(context.Background(), "pkg:npm/x@1.0.0", Config{Store: st})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Groups) != 1 {
-		t.Fatalf("want 1 group, got %d", len(res.Groups))
-	}
+	require.NoError(t, err)
+	require.Len(t, res.Groups, 1)
 	g := res.Groups[0]
-	if g.CanonicalID != "CVE-2020-1" {
-		t.Fatalf("CanonicalID = %q, want CVE-2020-1", g.CanonicalID)
-	}
-	if len(g.Members) != 2 {
-		t.Fatalf("want 2 members, got %d", len(g.Members))
-	}
+	assert.Equal(t, "CVE-2020-1", g.CanonicalID)
+	assert.Len(t, g.Members, 2)
 
-	// canonical_id quedó stampeado en los records persistidos.
+	// canonical_id got stamped on the persisted records.
 	for _, source := range []string{SourceEcosystems, SourceOSV} {
 		key := source + "|"
 		if source == SourceEcosystems {
@@ -497,11 +399,8 @@ func TestCollectGroupsByCanonical(t *testing.T) {
 			key += "npm:x"
 		}
 		got := st.vulns[key]
-		if !got.Found || len(got.Value) == 0 {
-			t.Fatalf("%s: no records persisted", source)
-		}
-		if got.Value[0].CanonicalID != "CVE-2020-1" {
-			t.Fatalf("%s: CanonicalID = %q, want CVE-2020-1", source, got.Value[0].CanonicalID)
-		}
+		require.True(t, got.Found, "%s: no records persisted", source)
+		require.NotEmpty(t, got.Value, "%s: no records persisted", source)
+		assert.Equal(t, "CVE-2020-1", got.Value[0].CanonicalID, "%s", source)
 	}
 }

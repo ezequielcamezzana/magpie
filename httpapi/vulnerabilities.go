@@ -4,14 +4,14 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
 type vulnsResponse struct {
-	Records []magpie.VulnRecord `json:"records"`
-	Page    int                 `json:"page"`
-	Limit   int                 `json:"limit"`
-	Total   int                 `json:"total"`
+	Records []collect.VulnRecord `json:"records"`
+	Page    int                  `json:"page"`
+	Limit   int                  `json:"limit"`
+	Total   int                  `json:"total"`
 }
 
 func handleVulnerabilities(deps Deps) http.HandlerFunc {
@@ -34,7 +34,7 @@ func handleVulnerabilities(deps Deps) http.HandlerFunc {
 			limit = 100
 		}
 
-		recs, total, err := deps.Config.Store.QueryVulns(r.Context(), magpie.VulnQuery{
+		recs, total, err := deps.Config.Store.QueryVulns(r.Context(), collect.VulnQuery{
 			ID: id, Page: page, Limit: limit,
 		})
 		if err != nil {
@@ -44,7 +44,7 @@ func handleVulnerabilities(deps Deps) http.HandlerFunc {
 
 		// WHY: lista vacía, no null — el FE itera sobre records sin chequear nil.
 		if recs == nil {
-			recs = []magpie.VulnRecord{}
+			recs = []collect.VulnRecord{}
 		}
 
 		writeJSON(w, http.StatusOK, vulnsResponse{

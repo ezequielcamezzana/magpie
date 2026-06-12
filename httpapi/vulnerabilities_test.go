@@ -11,22 +11,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ezequielcamezzana/magpie"
 	"github.com/ezequielcamezzana/magpie/httpapi"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type vulnsResponse struct {
-	Records []magpie.VulnRecord `json:"records"`
-	Page    int                 `json:"page"`
-	Limit   int                 `json:"limit"`
-	Total   int                 `json:"total"`
+	Records []collect.VulnRecord `json:"records"`
+	Page    int                  `json:"page"`
+	Limit   int                  `json:"limit"`
+	Total   int                  `json:"total"`
 }
 
 // newVulnsServer levanta un server con el store seedeado por seed (puede ser nil).
-func newVulnsServer(t *testing.T, seed func(t *testing.T, db magpie.Store)) *httptest.Server {
+func newVulnsServer(t *testing.T, seed func(t *testing.T, db collect.Store)) *httptest.Server {
 	t.Helper()
 	db, err := sqlite.Open(":memory:")
 	if err != nil {
@@ -40,7 +40,7 @@ func newVulnsServer(t *testing.T, seed func(t *testing.T, db magpie.Store)) *htt
 
 	r := chi.NewRouter()
 	httpapi.Mount(r, httpapi.Deps{
-		Config: magpie.Config{Store: db},
+		Config: collect.Config{Store: db},
 		Logger: slog.Default(),
 	})
 	srv := httptest.NewServer(r)
@@ -64,13 +64,13 @@ func getVulns(t *testing.T, srv *httptest.Server, query string) (*http.Response,
 }
 
 func TestVulnsFilterByOriginalID(t *testing.T) {
-	srv := newVulnsServer(t, func(t *testing.T, db magpie.Store) {
-		if err := db.PutVulns(context.Background(), "ecosyste.ms", "k1", []magpie.VulnRecord{
+	srv := newVulnsServer(t, func(t *testing.T, db collect.Store) {
+		if err := db.PutVulns(context.Background(), "ecosyste.ms", "k1", []collect.VulnRecord{
 			{OriginalID: "GHSA-abc", CanonicalID: "CVE-2024-1", Source: "ecosyste.ms", FetchedAt: time.Now()},
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.PutVulns(context.Background(), "osv", "k2", []magpie.VulnRecord{
+		if err := db.PutVulns(context.Background(), "osv", "k2", []collect.VulnRecord{
 			{OriginalID: "CVE-2024-1", CanonicalID: "CVE-2024-1", Source: "osv", FetchedAt: time.Now()},
 		}); err != nil {
 			t.Fatal(err)
@@ -90,13 +90,13 @@ func TestVulnsFilterByOriginalID(t *testing.T) {
 }
 
 func TestVulnsFilterByCanonicalID(t *testing.T) {
-	srv := newVulnsServer(t, func(t *testing.T, db magpie.Store) {
-		if err := db.PutVulns(context.Background(), "ecosyste.ms", "k1", []magpie.VulnRecord{
+	srv := newVulnsServer(t, func(t *testing.T, db collect.Store) {
+		if err := db.PutVulns(context.Background(), "ecosyste.ms", "k1", []collect.VulnRecord{
 			{OriginalID: "GHSA-abc", CanonicalID: "CVE-2024-1", Source: "ecosyste.ms", FetchedAt: time.Now()},
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.PutVulns(context.Background(), "osv", "k2", []magpie.VulnRecord{
+		if err := db.PutVulns(context.Background(), "osv", "k2", []collect.VulnRecord{
 			{OriginalID: "CVE-2024-1", CanonicalID: "CVE-2024-1", Source: "osv", FetchedAt: time.Now()},
 		}); err != nil {
 			t.Fatal(err)
@@ -117,11 +117,11 @@ func TestVulnsFilterByCanonicalID(t *testing.T) {
 
 func TestVulnsPagination(t *testing.T) {
 	const n = 5
-	srv := newVulnsServer(t, func(t *testing.T, db magpie.Store) {
+	srv := newVulnsServer(t, func(t *testing.T, db collect.Store) {
 		base := time.Now()
-		var recs []magpie.VulnRecord
+		var recs []collect.VulnRecord
 		for i := 0; i < n; i++ {
-			recs = append(recs, magpie.VulnRecord{
+			recs = append(recs, collect.VulnRecord{
 				OriginalID:  "OSV-" + string(rune('a'+i)),
 				CanonicalID: "OSV-" + string(rune('a'+i)),
 				Source:      "osv",

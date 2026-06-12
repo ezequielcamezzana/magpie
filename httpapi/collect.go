@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
 func handleCollect(deps Deps) http.HandlerFunc {
@@ -18,7 +18,7 @@ func handleCollect(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		result, err := magpie.Collect(r.Context(), coord, deps.Config)
+		result, err := collect.Collect(r.Context(), coord, deps.Config)
 		if err != nil {
 			// WHY: el coord es input del usuario; un parse error es bad request.
 			// TODO: distinguir 400 (coord inválida) de 500 (config rota).

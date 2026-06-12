@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ezequielcamezzana/magpie"
 	"github.com/ezequielcamezzana/magpie/httpapi"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
@@ -25,26 +25,26 @@ var stubFetchErr error
 
 type stubFetcher struct{}
 
-func (stubFetcher) Fetch(ctx context.Context, spurl string) (magpie.Component, *magpie.Repository, []magpie.VulnRecord, error) {
+func (stubFetcher) Fetch(ctx context.Context, spurl string) (collect.Component, *collect.Repository, []collect.VulnRecord, error) {
 	if stubFetchErr != nil {
-		return magpie.Component{}, nil, nil, stubFetchErr
+		return collect.Component{}, nil, nil, stubFetchErr
 	}
-	return magpie.Component{Name: "chalk", SPURL: spurl}, nil, nil, nil
+	return collect.Component{Name: "chalk", SPURL: spurl}, nil, nil, nil
 }
 
 // noopOSV es un OSVFetcher que no devuelve nada, para que los tests que esperan
 // Errors vacío no fallen por el "not registered" de stage 2.
 type noopOSV struct{}
 
-func (noopOSV) Query(ctx context.Context, q purl.OSVQuery) ([]magpie.VulnRecord, error) {
+func (noopOSV) Query(ctx context.Context, q purl.OSVQuery) ([]collect.VulnRecord, error) {
 	return nil, nil
 }
 
 func TestMain(m *testing.M) {
-	magpie.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) magpie.EcosystemsFetcher {
+	collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
 		return stubFetcher{}
 	})
-	magpie.RegisterOSVFetcher(func(httpc *http.Client, logger *slog.Logger) magpie.OSVFetcher {
+	collect.RegisterOSVFetcher(func(httpc *http.Client, logger *slog.Logger) collect.OSVFetcher {
 		return noopOSV{}
 	})
 	os.Exit(m.Run())
@@ -60,7 +60,7 @@ func newServer(t *testing.T) *httptest.Server {
 
 	r := chi.NewRouter()
 	httpapi.Mount(r, httpapi.Deps{
-		Config: magpie.Config{Store: db},
+		Config: collect.Config{Store: db},
 		Logger: slog.Default(),
 	})
 	srv := httptest.NewServer(r)
@@ -81,7 +81,7 @@ func TestCollectOK(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var res magpie.Result
+	var res collect.Result
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestSPADoesNotShadowAPI(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /collect status = %d, want 200", resp.StatusCode)
 	}
-	var res magpie.Result
+	var res collect.Result
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		t.Fatalf("GET /collect: decode JSON: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestCollectPartialFailureIs200(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var res magpie.Result
+	var res collect.Result
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		t.Fatal(err)
 	}

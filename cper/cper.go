@@ -5,7 +5,7 @@
 //
 // WHY package aparte: igual que los sources, importa magpie (tipos de
 // dominio), así que magpie no puede importarlo de vuelta — se instala vía
-// magpie.RegisterCPER en el init().
+// collect.RegisterCPER en el init().
 package cper
 
 import (
@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	magpie "github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/match"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 	"github.com/ezequielcamezzana/magpie/source/nvd"
@@ -26,14 +26,14 @@ import (
 // NVDFetcher trae una CVE de NVD por id; *nvd.Client la satisface. Es
 // parámetro de Run para poder stubear en tests.
 type NVDFetcher interface {
-	FetchCVE(ctx context.Context, cveID string) (*magpie.NVDCVE, error)
+	FetchCVE(ctx context.Context, cveID string) (*collect.NVDCVE, error)
 }
 
 // maxLookups acota cuántas CVE se consultan a NVD por Run.
 const maxLookups = 5
 
 func init() {
-	magpie.RegisterCPER(func(ctx context.Context, httpc *http.Client, cfg magpie.Config, id purl.Identity, spurl, repoURL string, records []magpie.VulnRecord, now time.Time) {
+	collect.RegisterCPER(func(ctx context.Context, httpc *http.Client, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) {
 		Run(ctx, nvd.New(httpc, slog.Default(), cfg.NVDAPIKey), cfg, id, spurl, repoURL, records, now)
 	})
 }
@@ -43,7 +43,7 @@ func init() {
 //
 // El cache es por paquete: CPEs frescos (GetCPEs vs MaxAge) cortocircuitan
 // todo; stale o ausentes → se consulta NVD por CVE (hasta maxLookups).
-func Run(ctx context.Context, fetcher NVDFetcher, cfg magpie.Config, id purl.Identity, spurl, repoURL string, records []magpie.VulnRecord, now time.Time) {
+func Run(ctx context.Context, fetcher NVDFetcher, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) {
 	if cfg.NVDAPIKey == "" || fetcher == nil {
 		return // CPER deshabilitado sin API key
 	}
@@ -54,7 +54,7 @@ func Run(ctx context.Context, fetcher NVDFetcher, cfg magpie.Config, id purl.Ide
 	if id.Kind == purl.KindLinux {
 		return
 	}
-	if cached, _ := cfg.Store.GetCPEs(ctx, spurl); cached.Found && magpie.IsFresh(cached.FetchedAt, cfg.MaxAge, now) {
+	if cached, _ := cfg.Store.GetCPEs(ctx, spurl); cached.Found && collect.IsFresh(cached.FetchedAt, cfg.MaxAge, now) {
 		return // CPEs frescos: no tocamos NVD
 	}
 
@@ -67,8 +67,8 @@ func Run(ctx context.Context, fetcher NVDFetcher, cfg magpie.Config, id purl.Ide
 	nameSet, vendorSet := lowerSet(names), lowerSet(vendors)
 	wantSw := id.TargetSW()
 
-	var resolved []magpie.ResolvedCPE
-	var nvdRecords []magpie.VulnRecord
+	var resolved []collect.ResolvedCPE
+	var nvdRecords []collect.VulnRecord
 	seen := map[string]bool{}
 
 	for i, cve := range cves {
@@ -94,7 +94,7 @@ func Run(ctx context.Context, fetcher NVDFetcher, cfg magpie.Config, id purl.Ide
 
 	_ = cfg.Store.PutCPEs(ctx, spurl, resolved)
 	if len(nvdRecords) > 0 {
-		_ = cfg.Store.PutVulns(ctx, magpie.SourceNVD, spurl, nvdRecords)
+		_ = cfg.Store.PutVulns(ctx, collect.SourceNVD, spurl, nvdRecords)
 	}
 }
 
@@ -104,11 +104,11 @@ func Run(ctx context.Context, fetcher NVDFetcher, cfg magpie.Config, id purl.Ide
 //
 // con range estratificado: si name matchea → shared concrete range; si no →
 // OSV ⊆ NVD (subset estricto).
-func acceptCPEs(nvdCVE *magpie.NVDCVE, cve string, names, vendors, osvRanges []string,
+func acceptCPEs(nvdCVE *collect.NVDCVE, cve string, names, vendors, osvRanges []string,
 	nameSet, vendorSet map[string]bool, wantSw, ecosystem string,
-	osvIntervals []match.Interval, osvOk bool, seen map[string]bool) []magpie.ResolvedCPE {
+	osvIntervals []match.Interval, osvOk bool, seen map[string]bool) []collect.ResolvedCPE {
 
-	var out []magpie.ResolvedCPE
+	var out []collect.ResolvedCPE
 	for _, m := range nvdCVE.Matches {
 		if m.Vendor == "" || m.Product == "" {
 			continue
@@ -143,7 +143,7 @@ func acceptCPEs(nvdCVE *magpie.NVDCVE, cve string, names, vendors, osvRanges []s
 		// Ranges siempre (matcheen o no): NVDRanges = todo lo que NVD declara
 		// para este CPE; OSVRanges = nuestro lado del cruce. Cuando range no
 		// matchea, la UI puede mostrar ambos para explicar el porqué.
-		rec := magpie.ResolvedCPE{
+		rec := collect.ResolvedCPE{
 			CPE: m.PartialCPE, CVE: cve, NVDVendor: m.Vendor, NVDProduct: m.Product,
 			Ecosystem: ecosystem, Names: names, Vendors: vendors,
 			NVDRanges: m.AffectedRanges, OSVRanges: osvRanges,
@@ -175,7 +175,7 @@ func acceptCPEs(nvdCVE *magpie.NVDCVE, cve string, names, vendors, osvRanges []s
 
 // nvdVulnRecord arma el vuln record NVD del paquete para una CVE resuelta:
 // header con metadata de NVD, ranges/fixed unión de los CPE aceptados.
-func nvdVulnRecord(nvdCVE *magpie.NVDCVE, accepted []magpie.ResolvedCPE, spurl string, now time.Time) magpie.VulnRecord {
+func nvdVulnRecord(nvdCVE *collect.NVDCVE, accepted []collect.ResolvedCPE, spurl string, now time.Time) collect.VulnRecord {
 	acceptedCPE := map[string]bool{}
 	for _, a := range accepted {
 		acceptedCPE[a.CPE] = true
@@ -199,8 +199,8 @@ func nvdVulnRecord(nvdCVE *magpie.NVDCVE, accepted []magpie.ResolvedCPE, spurl s
 			}
 		}
 	}
-	return magpie.VulnRecord{
-		Source:          magpie.SourceNVD,
+	return collect.VulnRecord{
+		Source:          collect.SourceNVD,
 		QueryKey:        spurl,
 		AffectedPackage: accepted[0].CPE,
 		OriginalID:      nvdCVE.ID,
@@ -223,12 +223,12 @@ func nvdVulnRecord(nvdCVE *magpie.NVDCVE, accepted []magpie.ResolvedCPE, spurl s
 // Se ordena por Published (vulns más nuevas) y no por Modified: a un CVE viejo
 // cualquier re-enrichment le renueva el Modified y le ganaría a vulns recién
 // publicadas.
-func canonicalCVEs(records []magpie.VulnRecord) (cves []string, rangesByCVE map[string][]string) {
+func canonicalCVEs(records []collect.VulnRecord) (cves []string, rangesByCVE map[string][]string) {
 	rangesByCVE = map[string][]string{}
 	newest := map[string]time.Time{}
 	for _, r := range records {
-		cve := magpie.CanonicalIDFor(r)
-		if !magpie.IsCVE(cve) {
+		cve := collect.CanonicalIDFor(r)
+		if !collect.IsCVE(cve) {
 			continue
 		}
 		if m, ok := newest[cve]; !ok {

@@ -4,14 +4,14 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
 type cpesResponse struct {
-	CPEs  []magpie.ResolvedCPE `json:"cpes"`
-	Page  int                  `json:"page"`
-	Limit int                  `json:"limit"`
-	Total int                  `json:"total"`
+	CPEs  []collect.ResolvedCPE `json:"cpes"`
+	Page  int                   `json:"page"`
+	Limit int                   `json:"limit"`
+	Total int                   `json:"total"`
 }
 
 // handleCPEs es el índice global de CPEs resueltos, buscable por
@@ -32,7 +32,7 @@ func handleCPEs(deps Deps) http.HandlerFunc {
 			limit = 100
 		}
 
-		cpes, total, err := deps.Config.Store.QueryCPEs(r.Context(), magpie.CPEQuery{
+		cpes, total, err := deps.Config.Store.QueryCPEs(r.Context(), collect.CPEQuery{
 			Search: q.Get("search"), Page: page, Limit: limit,
 		})
 		if err != nil {
@@ -40,7 +40,7 @@ func handleCPEs(deps Deps) http.HandlerFunc {
 			return
 		}
 		if cpes == nil {
-			cpes = []magpie.ResolvedCPE{}
+			cpes = []collect.ResolvedCPE{}
 		}
 
 		writeJSON(w, http.StatusOK, cpesResponse{CPEs: cpes, Page: page, Limit: limit, Total: total})

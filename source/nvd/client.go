@@ -13,7 +13,7 @@ import (
 	"net/url"
 	"time"
 
-	magpie "github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
 const (
@@ -40,8 +40,8 @@ func New(httpc *http.Client, logger *slog.Logger, apiKey string) *Client {
 	return &Client{httpc: httpc, logger: logger, apiKey: apiKey, delay: delay}
 }
 
-// FetchCVE trae una CVE de NVD y la parsea a *magpie.NVDCVE (metadata + matches).
-func (c *Client) FetchCVE(ctx context.Context, cveID string) (*magpie.NVDCVE, error) {
+// FetchCVE trae una CVE de NVD y la parsea a *collect.NVDCVE (metadata + matches).
+func (c *Client) FetchCVE(ctx context.Context, cveID string) (*collect.NVDCVE, error) {
 	q := url.Values{}
 	q.Set("cveId", cveID)
 

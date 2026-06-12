@@ -1,4 +1,4 @@
-package magpie
+package collect
 
 import (
 	"encoding/json"
@@ -51,19 +51,19 @@ type NVDCPEMatch struct {
 }
 
 type ResolvedCPE struct {
-	SPURL       string // paquete asociado (poblado al leer de la DB)
+	SPURL       string // associated package (populated when reading from the DB)
 	CPE         string
 	CVE         string
-	MatchedBy   []string // {name,vendor,ecosystem,range} — persistido como booleanos
-	Explanation string   // justificación human-readable para la UI
+	MatchedBy   []string // {name,vendor,ecosystem,range} — persisted as booleans
+	Explanation string   // human-readable justification for the UI
 	NVDVendor   string
 	NVDProduct  string
 	NVDTargetSw string
-	NVDRanges   []string // todos los ranges que NVD declara para el CPE (matcheen o no)
-	OSVRanges   []string // nuestro lado del cruce (ranges OSV del CVE)
+	NVDRanges   []string // every range NVD declares for the CPE (matching or not)
+	OSVRanges   []string // our side of the cross-check (the CVE's OSV ranges)
 	Ecosystem   string
-	Names       []string // provenance in-memory (no persistido)
-	Vendors     []string // provenance in-memory (no persistido)
+	Names       []string // in-memory provenance (not persisted)
+	Vendors     []string // in-memory provenance (not persisted)
 }
 
 type VulnRecord struct {
@@ -91,20 +91,20 @@ type CanonicalGroup struct {
 	Records     []VulnRecord
 }
 
-// VulnGroup es un CanonicalGroup tras correr matching: cada member trae su
-// verdict (nivel 1) y el grupo trae el roll-up (nivel 2, DD §6).
+// VulnGroup is a CanonicalGroup after running matching: each member carries
+// its verdict (level 1) and the group carries the roll-up (level 2, DD §6).
 type VulnGroup struct {
 	CanonicalID string
 	MaxScore    float64
-	Affected    bool      // roll-up nivel 2
-	Created     time.Time // Published más viejo entre los members
-	Updated     time.Time // Modified más nuevo entre los members
+	Affected    bool      // level 2 roll-up
+	Created     time.Time // oldest Published among the members
+	Updated     time.Time // newest Modified among the members
 	Members     []VulnMember
 }
 
 type VulnMember struct {
 	Record  VulnRecord
-	Verdict MatchVerdict // nivel 1 per-record
+	Verdict MatchVerdict // level 1 per-record
 }
 
 type MatchVerdict struct {
@@ -121,8 +121,8 @@ type SourceError struct {
 	Err    error
 }
 
-// MarshalJSON serializa Err como string ("message") — el tipo error no es
-// JSON-serializable por sí mismo.
+// MarshalJSON serializes Err as a string ("message") — the error type is not
+// JSON-serializable by itself.
 func (e SourceError) MarshalJSON() ([]byte, error) {
 	var msg string
 	if e.Err != nil {

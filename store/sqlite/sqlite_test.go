@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	magpie "github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
 func openTest(t *testing.T) *Store {
@@ -46,7 +46,7 @@ func TestComponentRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 
-	in := magpie.Component{
+	in := collect.Component{
 		SPURL:         "pkg:npm/left-pad",
 		Name:          "left-pad",
 		Description:   "pads on the left",
@@ -94,7 +94,7 @@ func TestComponentEmptyLicenses(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 
-	in := magpie.Component{SPURL: "pkg:npm/empty", Name: "empty"}
+	in := collect.Component{SPURL: "pkg:npm/empty", Name: "empty"}
 	if err := s.PutComponent(ctx, in); err != nil {
 		t.Fatalf("PutComponent: %v", err)
 	}
@@ -122,8 +122,8 @@ func TestComponentUpsert(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 
-	first := magpie.Component{SPURL: "pkg:npm/x", Name: "old", LatestVersion: "1.0.0"}
-	second := magpie.Component{SPURL: "pkg:npm/x", Name: "new", LatestVersion: "2.0.0", Licenses: []string{"MIT"}}
+	first := collect.Component{SPURL: "pkg:npm/x", Name: "old", LatestVersion: "1.0.0"}
+	second := collect.Component{SPURL: "pkg:npm/x", Name: "new", LatestVersion: "2.0.0", Licenses: []string{"MIT"}}
 
 	if err := s.PutComponent(ctx, first); err != nil {
 		t.Fatalf("PutComponent first: %v", err)
@@ -145,7 +145,7 @@ func TestRepositoryRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 
-	in := magpie.Repository{
+	in := collect.Repository{
 		URL:         "https://github.com/foo/bar",
 		Stars:       1200,
 		Forks:       34,
@@ -186,7 +186,7 @@ func TestRepositoryZeroTimes(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 
-	in := magpie.Repository{URL: "https://github.com/zero/times", Stars: 1}
+	in := collect.Repository{URL: "https://github.com/zero/times", Stars: 1}
 	if err := s.PutRepository(ctx, in); err != nil {
 		t.Fatalf("PutRepository: %v", err)
 	}
@@ -213,8 +213,8 @@ func TestRepositoryNotFound(t *testing.T) {
 	}
 }
 
-func vulnRecord(id, canonical string, fetchedAt time.Time) magpie.VulnRecord {
-	return magpie.VulnRecord{
+func vulnRecord(id, canonical string, fetchedAt time.Time) collect.VulnRecord {
+	return collect.VulnRecord{
 		Source:             "osv",
 		QueryKey:           "pkg:npm/left-pad",
 		AffectedPackage:    "pkg:npm/left-pad",
@@ -239,7 +239,7 @@ func TestVulnsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	in := []magpie.VulnRecord{
+	in := []collect.VulnRecord{
 		vulnRecord("OSV-1", "CVE-2020-1", now),
 		vulnRecord("OSV-2", "CVE-2020-2", now.Add(-time.Hour)),
 		vulnRecord("OSV-3", "CVE-2020-3", now.Add(-2*time.Hour)),
@@ -260,7 +260,7 @@ func TestVulnsRoundTrip(t *testing.T) {
 		t.Fatalf("expected 3 records, got %d", len(res.Value))
 	}
 
-	byID := map[string]magpie.VulnRecord{}
+	byID := map[string]collect.VulnRecord{}
 	for _, r := range res.Value {
 		byID[r.OriginalID] = r
 	}
@@ -303,11 +303,11 @@ func TestVulnsEmptyLists(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	in := magpie.VulnRecord{
+	in := collect.VulnRecord{
 		Source: "osv", QueryKey: "k", OriginalID: "OSV-1", CanonicalID: "CVE-2020-1",
 		FetchedAt: now,
 	}
-	if err := s.PutVulns(ctx, "osv", "k", []magpie.VulnRecord{in}); err != nil {
+	if err := s.PutVulns(ctx, "osv", "k", []collect.VulnRecord{in}); err != nil {
 		t.Fatalf("PutVulns: %v", err)
 	}
 	res, err := s.GetVulns(ctx, "osv", "k")
@@ -347,7 +347,7 @@ func TestGetVulnsFetchedAtIsMin(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	oldest := now.Add(-3 * time.Hour)
-	in := []magpie.VulnRecord{
+	in := []collect.VulnRecord{
 		vulnRecord("OSV-1", "CVE-2020-1", now),
 		vulnRecord("OSV-2", "CVE-2020-2", oldest),
 		vulnRecord("OSV-3", "CVE-2020-3", now.Add(-time.Hour)),
@@ -369,7 +369,7 @@ func TestPutVulnsReplaces(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	setA := []magpie.VulnRecord{
+	setA := []collect.VulnRecord{
 		vulnRecord("OSV-1", "CVE-2020-1", now),
 		vulnRecord("OSV-2", "CVE-2020-2", now),
 		vulnRecord("OSV-3", "CVE-2020-3", now),
@@ -378,7 +378,7 @@ func TestPutVulnsReplaces(t *testing.T) {
 		t.Fatalf("PutVulns A: %v", err)
 	}
 
-	setB := []magpie.VulnRecord{vulnRecord("OSV-9", "CVE-2020-9", now)}
+	setB := []collect.VulnRecord{vulnRecord("OSV-9", "CVE-2020-9", now)}
 	if err := s.PutVulns(ctx, "osv", "pkg:npm/left-pad", setB); err != nil {
 		t.Fatalf("PutVulns B: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestPutVulnsAtomic(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	setA := []magpie.VulnRecord{
+	setA := []collect.VulnRecord{
 		vulnRecord("OSV-1", "CVE-2020-1", now),
 		vulnRecord("OSV-2", "CVE-2020-2", now),
 	}
@@ -411,7 +411,7 @@ func TestPutVulnsAtomic(t *testing.T) {
 		t.Fatalf("PutVulns A: %v", err)
 	}
 
-	bad := []magpie.VulnRecord{
+	bad := []collect.VulnRecord{
 		vulnRecord("DUP", "CVE-X", now),
 		vulnRecord("DUP", "CVE-Y", now),
 	}
@@ -436,16 +436,16 @@ func TestVulnsDedup(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	mk := func(queryKey, affPkg string) magpie.VulnRecord {
+	mk := func(queryKey, affPkg string) collect.VulnRecord {
 		r := vulnRecord("GHSA-shared", "CVE-2020-shared", now)
 		r.QueryKey = queryKey
 		r.AffectedPackage = affPkg
 		return r
 	}
-	if err := s.PutVulns(ctx, "osv", "npm:axios", []magpie.VulnRecord{mk("npm:axios", "pkg:npm/axios")}); err != nil {
+	if err := s.PutVulns(ctx, "osv", "npm:axios", []collect.VulnRecord{mk("npm:axios", "pkg:npm/axios")}); err != nil {
 		t.Fatalf("PutVulns axios: %v", err)
 	}
-	if err := s.PutVulns(ctx, "osv", "npm:chalk", []magpie.VulnRecord{mk("npm:chalk", "pkg:npm/chalk")}); err != nil {
+	if err := s.PutVulns(ctx, "osv", "npm:chalk", []collect.VulnRecord{mk("npm:chalk", "pkg:npm/chalk")}); err != nil {
 		t.Fatalf("PutVulns chalk: %v", err)
 	}
 
@@ -486,20 +486,20 @@ func seedQueryVulns(t *testing.T, s *Store) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	mk := func(source, key, id, canonical string, at time.Time) magpie.VulnRecord {
+	mk := func(source, key, id, canonical string, at time.Time) collect.VulnRecord {
 		r := vulnRecord(id, canonical, at)
 		r.Source = source
 		r.QueryKey = key
 		return r
 	}
 	// Two records share canonical CVE-SHARED.
-	if err := s.PutVulns(ctx, "osv", "k1", []magpie.VulnRecord{
+	if err := s.PutVulns(ctx, "osv", "k1", []collect.VulnRecord{
 		mk("osv", "k1", "OSV-A", "CVE-SHARED", now),
 		mk("osv", "k1", "OSV-B", "CVE-2020-B", now.Add(-time.Hour)),
 	}); err != nil {
 		t.Fatalf("seed osv: %v", err)
 	}
-	if err := s.PutVulns(ctx, "nvd", "k2", []magpie.VulnRecord{
+	if err := s.PutVulns(ctx, "nvd", "k2", []collect.VulnRecord{
 		mk("nvd", "k2", "CVE-SHARED", "CVE-SHARED", now.Add(-2*time.Hour)),
 		mk("nvd", "k2", "CVE-2020-D", "CVE-2020-D", now.Add(-3*time.Hour)),
 	}); err != nil {
@@ -511,7 +511,7 @@ func TestQueryVulnsByOriginalID(t *testing.T) {
 	s := openTest(t)
 	seedQueryVulns(t, s)
 
-	recs, total, err := s.QueryVulns(context.Background(), magpie.VulnQuery{ID: "OSV-B", Page: 1, Limit: 25})
+	recs, total, err := s.QueryVulns(context.Background(), collect.VulnQuery{ID: "OSV-B", Page: 1, Limit: 25})
 	if err != nil {
 		t.Fatalf("QueryVulns: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestQueryVulnsByCanonicalID(t *testing.T) {
 	s := openTest(t)
 	seedQueryVulns(t, s)
 
-	recs, total, err := s.QueryVulns(context.Background(), magpie.VulnQuery{ID: "CVE-SHARED", Page: 1, Limit: 25})
+	recs, total, err := s.QueryVulns(context.Background(), collect.VulnQuery{ID: "CVE-SHARED", Page: 1, Limit: 25})
 	if err != nil {
 		t.Fatalf("QueryVulns: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestQueryVulnsPagination(t *testing.T) {
 	s := openTest(t)
 	seedQueryVulns(t, s)
 
-	p1, total, err := s.QueryVulns(context.Background(), magpie.VulnQuery{Page: 1, Limit: 2})
+	p1, total, err := s.QueryVulns(context.Background(), collect.VulnQuery{Page: 1, Limit: 2})
 	if err != nil {
 		t.Fatalf("QueryVulns p1: %v", err)
 	}
@@ -555,7 +555,7 @@ func TestQueryVulnsPagination(t *testing.T) {
 		t.Fatalf("expected 2 on page 1, got %d", len(p1))
 	}
 
-	p2, _, err := s.QueryVulns(context.Background(), magpie.VulnQuery{Page: 2, Limit: 2})
+	p2, _, err := s.QueryVulns(context.Background(), collect.VulnQuery{Page: 2, Limit: 2})
 	if err != nil {
 		t.Fatalf("QueryVulns p2: %v", err)
 	}
@@ -572,7 +572,7 @@ func TestQueryVulnsEmptyID(t *testing.T) {
 	s := openTest(t)
 	seedQueryVulns(t, s)
 
-	recs, total, err := s.QueryVulns(context.Background(), magpie.VulnQuery{Page: 1, Limit: 25})
+	recs, total, err := s.QueryVulns(context.Background(), collect.VulnQuery{Page: 1, Limit: 25})
 	if err != nil {
 		t.Fatalf("QueryVulns: %v", err)
 	}
@@ -613,7 +613,7 @@ func TestOpenMigratesOldCPEsTable(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 
 	ctx := context.Background()
-	in := []magpie.ResolvedCPE{{CPE: "cpe:2.3:a:x:y", CVE: "CVE-2020-1",
+	in := []collect.ResolvedCPE{{CPE: "cpe:2.3:a:x:y", CVE: "CVE-2020-1",
 		NVDVendor: "x", NVDProduct: "y", NVDRanges: []string{"[1, 2)"}}}
 	if err := s.PutCPEs(ctx, "pkg:npm/x", in); err != nil {
 		t.Fatalf("PutCPEs after migration: %v", err)
@@ -630,7 +630,7 @@ func TestOpenMigratesOldCPEsTable(t *testing.T) {
 func TestCPEsRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	in := []magpie.ResolvedCPE{
+	in := []collect.ResolvedCPE{
 		{CPE: "cpe:2.3:a:lodash:lodash", CVE: "CVE-2021-23337", NVDVendor: "lodash",
 			NVDProduct: "lodash", NVDTargetSw: "node.js", Ecosystem: "npm",
 			MatchedBy:   []string{"name", "vendor", "ecosystem", "range"},
@@ -650,7 +650,7 @@ func TestCPEsRoundTrip(t *testing.T) {
 	if !res.Found || len(res.Value) != 2 {
 		t.Fatalf("expected 2 cpes, got %+v", res)
 	}
-	byCPE := map[string]magpie.ResolvedCPE{}
+	byCPE := map[string]collect.ResolvedCPE{}
 	for _, c := range res.Value {
 		byCPE[c.CPE] = c
 	}

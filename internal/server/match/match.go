@@ -24,9 +24,9 @@ type Matcher interface {
 }
 
 // NOTE: these reason codes deliberately duplicate the string values of
-// magpie.ReasonX in result.go. This package cannot import the root package
-// magpie because collect.go (root) imports this package — importing it back
-// would create a cycle. The match.Result -> magpie.MatchVerdict mapping is
+// collect.ReasonX in result.go. This package cannot import the collect
+// package because collect.go imports this package — importing it back
+// would create a cycle. The match.Result -> collect.MatchVerdict mapping is
 // done by collect.
 const (
 	ReasonNoVersionSpecified       = "no_version_specified"

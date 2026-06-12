@@ -1,11 +1,11 @@
-// Package httpapi expone el pipeline magpie.Collect sobre HTTP con chi.
+// Package httpapi expone el pipeline collect.Collect sobre HTTP con chi.
 package httpapi
 
 import (
 	"log/slog"
 	"time"
 
-	"github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/web"
 
 	"github.com/go-chi/chi/v5"
@@ -13,7 +13,7 @@ import (
 )
 
 type Deps struct {
-	Config         magpie.Config
+	Config         collect.Config
 	Logger         *slog.Logger
 	Version        string
 	RequestTimeout time.Duration

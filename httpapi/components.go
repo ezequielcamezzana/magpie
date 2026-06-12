@@ -4,14 +4,14 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
 type componentsResponse struct {
-	Components []magpie.Component `json:"components"`
-	Page       int                `json:"page"`
-	Limit      int                `json:"limit"`
-	Total      int                `json:"total"`
+	Components []collect.Component `json:"components"`
+	Page       int                 `json:"page"`
+	Limit      int                 `json:"limit"`
+	Total      int                 `json:"total"`
 }
 
 func handleComponents(deps Deps) http.HandlerFunc {
@@ -31,7 +31,7 @@ func handleComponents(deps Deps) http.HandlerFunc {
 			limit = 100
 		}
 
-		comps, total, err := deps.Config.Store.QueryComponents(r.Context(), magpie.ComponentQuery{
+		comps, total, err := deps.Config.Store.QueryComponents(r.Context(), collect.ComponentQuery{
 			Name: q.Get("name"), Ecosystem: q.Get("ecosystem"), Page: page, Limit: limit,
 		})
 		if err != nil {
@@ -41,7 +41,7 @@ func handleComponents(deps Deps) http.HandlerFunc {
 
 		// WHY: lista vacía, no null — el FE itera sin chequear nil.
 		if comps == nil {
-			comps = []magpie.Component{}
+			comps = []collect.Component{}
 		}
 
 		writeJSON(w, http.StatusOK, componentsResponse{

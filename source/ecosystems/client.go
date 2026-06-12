@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	magpie "github.com/ezequielcamezzana/magpie"
+	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
@@ -65,19 +65,19 @@ func New(httpc *http.Client, logger *slog.Logger) *Client {
 	return &Client{httpc: httpc, logger: logger, BaseURL: defaultBaseURL}
 }
 
-// WHY: magpie.Collect no puede importar este package (ciclo), así que registra
+// WHY: collect.Collect no puede importar este package (ciclo), así que registra
 // su constructor como el fetcher real de stage 1.
 func init() {
-	magpie.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) magpie.EcosystemsFetcher {
+	collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
 		return New(httpc, logger)
 	})
 }
 
 // Fetch retrieves package, repository and advisory data for a single SPURL.
-func (c *Client) Fetch(ctx context.Context, spurl string) (magpie.Component, *magpie.Repository, []magpie.VulnRecord, error) {
+func (c *Client) Fetch(ctx context.Context, spurl string) (collect.Component, *collect.Repository, []collect.VulnRecord, error) {
 	p, err := purl.Parse(spurl)
 	if err != nil {
-		return magpie.Component{}, nil, nil, err
+		return collect.Component{}, nil, nil, err
 	}
 	id := purl.Decompose(p)
 
@@ -86,7 +86,7 @@ func (c *Client) Fetch(ctx context.Context, spurl string) (magpie.Component, *ma
 		// ecosyste.ms no sirve este type/release (rpm, fedora, distro sin
 		// registry scopeado…): no es un fallo, el pipeline lo saltea y la data
 		// de distro llega por OSV.
-		return magpie.Component{}, nil, nil, fmt.Errorf("%w: %s", magpie.ErrSourceNotApplicable, id.Type)
+		return collect.Component{}, nil, nil, fmt.Errorf("%w: %s", collect.ErrSourceNotApplicable, id.Type)
 	}
 
 	canonical := purl.Strip(p)
@@ -94,27 +94,27 @@ func (c *Client) Fetch(ctx context.Context, spurl string) (magpie.Component, *ma
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return magpie.Component{}, nil, nil, err
+		return collect.Component{}, nil, nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpc.Do(req)
 	if err != nil {
-		return magpie.Component{}, nil, nil, err
+		return collect.Component{}, nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return magpie.Component{}, nil, nil, ErrNotFound
+		return collect.Component{}, nil, nil, ErrNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
-		return magpie.Component{}, nil, nil, fmt.Errorf("ecosystems: unexpected status %d", resp.StatusCode)
+		return collect.Component{}, nil, nil, fmt.Errorf("ecosystems: unexpected status %d", resp.StatusCode)
 	}
 
 	var raw rawPackage
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return magpie.Component{}, nil, nil, err
+		return collect.Component{}, nil, nil, err
 	}
 
 	// WHY: the client knows "this was fetched now"; the caller (collect)
@@ -128,12 +128,12 @@ func (c *Client) Fetch(ctx context.Context, spurl string) (magpie.Component, *ma
 	return comp, repo, vulns, nil
 }
 
-func mapComponent(raw *rawPackage, spurl string, now time.Time) magpie.Component {
+func mapComponent(raw *rawPackage, spurl string, now time.Time) collect.Component {
 	icon := raw.IconURL
 	if icon == "" && raw.RepoMetadata != nil {
 		icon = raw.RepoMetadata.IconURL
 	}
-	return magpie.Component{
+	return collect.Component{
 		SPURL:         spurl,
 		Name:          raw.Name,
 		Description:   raw.Description,
@@ -145,7 +145,7 @@ func mapComponent(raw *rawPackage, spurl string, now time.Time) magpie.Component
 	}
 }
 
-func mapRepository(raw *rawPackage, now time.Time) *magpie.Repository {
+func mapRepository(raw *rawPackage, now time.Time) *collect.Repository {
 	rm := raw.RepoMetadata
 	if rm == nil {
 		return nil
@@ -161,7 +161,7 @@ func mapRepository(raw *rawPackage, now time.Time) *magpie.Repository {
 	if raw.LatestReleasePublishedAt != "" {
 		lastRelease, _ = time.Parse(time.RFC3339, raw.LatestReleasePublishedAt)
 	}
-	return &magpie.Repository{
+	return &collect.Repository{
 		URL:         repoURL,
 		Stars:       rm.StargazersCount,
 		Forks:       rm.ForksCount,
@@ -172,8 +172,8 @@ func mapRepository(raw *rawPackage, now time.Time) *magpie.Repository {
 	}
 }
 
-func mapAdvisories(raws []json.RawMessage, queryKey string, id purl.Identity) []magpie.VulnRecord {
-	out := make([]magpie.VulnRecord, 0, len(raws))
+func mapAdvisories(raws []json.RawMessage, queryKey string, id purl.Identity) []collect.VulnRecord {
+	out := make([]collect.VulnRecord, 0, len(raws))
 	for _, payload := range raws {
 		var adv rawAdvisory
 		if err := json.Unmarshal(payload, &adv); err != nil {
@@ -184,7 +184,7 @@ func mapAdvisories(raws []json.RawMessage, queryKey string, id purl.Identity) []
 	return out
 }
 
-func mapAdvisory(adv *rawAdvisory, payload json.RawMessage, queryKey string, id purl.Identity) magpie.VulnRecord {
+func mapAdvisory(adv *rawAdvisory, payload json.RawMessage, queryKey string, id purl.Identity) collect.VulnRecord {
 	var published, modified time.Time
 	if adv.PublishedAt != "" {
 		published, _ = time.Parse(time.RFC3339, adv.PublishedAt)
@@ -193,8 +193,8 @@ func mapAdvisory(adv *rawAdvisory, payload json.RawMessage, queryKey string, id 
 		modified, _ = time.Parse(time.RFC3339, adv.UpdatedAt)
 	}
 
-	rec := magpie.VulnRecord{
-		Source:     magpie.SourceEcosystems,
+	rec := collect.VulnRecord{
+		Source:     collect.SourceEcosystems,
 		QueryKey:   queryKey,
 		OriginalID: pickOriginalID(adv.Identifiers),
 		Aliases:    adv.Identifiers,

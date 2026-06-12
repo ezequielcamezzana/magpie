@@ -1,18 +1,18 @@
-package magpie
+package collect
 
 import (
 	"context"
 	"time"
 )
 
-// StoreResult envuelve un valor cacheado con el momento en que fue obtenido.
+// StoreResult wraps a cached value with the moment it was fetched.
 //
-// WHY: se llama StoreResult y no Result para no colisionar con el Result de
-// dominio (result.go) en este mismo package; Go no permite dos identificadores
-// con el mismo nombre aunque uno sea genérico.
+// WHY: named StoreResult instead of Result to avoid colliding with the domain
+// Result (result.go) in this same package; Go doesn't allow two identifiers
+// with the same name even if one is generic.
 //
-// NOTE: Freshness vive en el caller — el Store solo expone FetchedAt; el
-// caller compara contra MaxAge.
+// NOTE: Freshness lives in the caller — the Store only exposes FetchedAt; the
+// caller compares against MaxAge.
 type StoreResult[T any] struct {
 	Value     T
 	FetchedAt time.Time
@@ -26,19 +26,19 @@ type VulnQuery struct {
 }
 
 type ComponentQuery struct {
-	Name      string // substring sobre name
-	Ecosystem string // tipo de purl exacto (npm, pypi, …)
+	Name      string // substring over name
+	Ecosystem string // exact purl type (npm, pypi, …)
 	Page      int
 	Limit     int
 }
 
 type CPEQuery struct {
-	Search string // substring sobre cpe/vendor/product/spurl (OR)
+	Search string // substring over cpe/vendor/product/spurl (OR)
 	Page   int
 	Limit  int
 }
 
-// Store es la interfaz de persistencia del DD §7.
+// Store is the persistence interface from DD §7.
 type Store interface {
 	GetComponent(ctx context.Context, spurl string) (StoreResult[Component], error)
 	PutComponent(ctx context.Context, c Component) error

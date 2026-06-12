@@ -1,4 +1,4 @@
-package magpie
+package collect
 
 import (
 	"context"
@@ -6,12 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
-// registerCPERStage instala un stage 3 fake para la duración del test. La
-// lógica real de CPER se testea en el package cper; acá solo el contrato de
-// Collect: invoca el stage y ensambla lo que dejó en el store.
+// registerCPERStage installs a fake stage 3 for the duration of the test. The
+// real CPER logic is tested in the cper package; here only Collect's contract:
+// it invokes the stage and assembles whatever it left in the store.
 func registerCPERStage(t *testing.T, f func(ctx context.Context, cfg Config, spurl string, records []VulnRecord, now time.Time)) {
 	t.Helper()
 	RegisterCPER(func(ctx context.Context, _ *http.Client, cfg Config, _ purl.Identity, spurl, _ string, records []VulnRecord, now time.Time) {
@@ -20,8 +23,8 @@ func registerCPERStage(t *testing.T, f func(ctx context.Context, cfg Config, spu
 	t.Cleanup(func() { RegisterCPER(nil) })
 }
 
-// TestCollectAssemblesCPERStage: lo que el stage 3 persiste (CPEs + records
-// source=nvd) queda ensamblado en el Result como 3ra fuente del canonical.
+// TestCollectAssemblesCPERStage: what stage 3 persists (CPEs + source=nvd
+// records) ends up assembled in the Result as the canonical's 3rd source.
 func TestCollectAssemblesCPERStage(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
@@ -35,9 +38,7 @@ func TestCollectAssemblesCPERStage(t *testing.T) {
 	registerOSV(t, stubOSV{})
 
 	registerCPERStage(t, func(ctx context.Context, cfg Config, sp string, records []VulnRecord, now time.Time) {
-		if len(records) == 0 {
-			t.Error("stage: want the assembled records, got none")
-		}
+		assert.NotEmpty(t, records, "stage: want the assembled records")
 		_ = cfg.Store.PutCPEs(ctx, sp, []ResolvedCPE{{CPE: "cpe:2.3:a:lodash:lodash", CVE: "CVE-2021-23337"}})
 		_ = cfg.Store.PutVulns(ctx, SourceNVD, sp, []VulnRecord{{
 			Source: SourceNVD, QueryKey: sp, OriginalID: "CVE-2021-23337",
@@ -47,15 +48,12 @@ func TestCollectAssemblesCPERStage(t *testing.T) {
 
 	res, err := Collect(context.Background(), "pkg:npm/lodash@4.17.20",
 		Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if len(res.CPEs) != 1 || res.CPEs[0].CPE != "cpe:2.3:a:lodash:lodash" {
-		t.Fatalf("want the stage's CPE in result, got %+v", res.CPEs)
-	}
+	require.Len(t, res.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:lodash:lodash", res.CPEs[0].CPE)
 
-	// El record NVD quedó ensamblado como member del grupo del CVE.
+	// The NVD record got assembled as a member of the CVE's group.
 	var nvdMembers int
 	for _, g := range res.Groups {
 		for _, m := range g.Members {
@@ -64,7 +62,5 @@ func TestCollectAssemblesCPERStage(t *testing.T) {
 			}
 		}
 	}
-	if nvdMembers != 1 {
-		t.Errorf("want 1 nvd member in groups, got %d", nvdMembers)
-	}
+	assert.Equal(t, 1, nvdMembers, "want 1 nvd member in groups")
 }
