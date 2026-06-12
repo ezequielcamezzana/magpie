@@ -1,11 +1,12 @@
-// Package cper implementa el stage 3 del pipeline (CPER): resuelve el/los CPE
-// de un paquete leyendo las CPE configurations de NVD para los CVE que
-// OSV/ecosyste.ms ya linkearon, y cruzando 4 señales (name/vendor/ecosystem/
-// range, DD §3a). Lifted de Holmes' pkg/agents/cpe_nvd_learner.go.
+// Package cper implements stage 3 of the pipeline (CPER): it resolves the
+// CPE(s) of a package by reading NVD's CPE configurations for the CVEs that
+// OSV/ecosyste.ms already linked, cross-checking 4 signals
+// (name/vendor/ecosystem/range, DD §3a). Lifted from Holmes'
+// pkg/agents/cpe_nvd_learner.go.
 //
-// WHY package aparte: igual que los sources, importa magpie (tipos de
-// dominio), así que magpie no puede importarlo de vuelta — se instala vía
-// collect.RegisterCPER en el init().
+// WHY a separate package: like the sources, it imports magpie (domain
+// types), so magpie cannot import it back — it installs itself via
+// collect.RegisterCPER in init().
 package cper
 
 import (
@@ -23,13 +24,13 @@ import (
 	"github.com/ezequielcamezzana/magpie/internal/server/source/nvd"
 )
 
-// NVDFetcher trae una CVE de NVD por id; *nvd.Client la satisface. Es
-// parámetro de Run para poder stubear en tests.
+// NVDFetcher fetches a CVE from NVD by id; *nvd.Client satisfies it. It is
+// a parameter of Run so tests can stub it.
 type NVDFetcher interface {
 	FetchCVE(ctx context.Context, cveID string) (*collect.NVDCVE, error)
 }
 
-// maxLookups acota cuántas CVE se consultan a NVD por Run.
+// maxLookups caps how many CVEs are looked up in NVD per Run.
 const maxLookups = 5
 
 func init() {
@@ -38,24 +39,24 @@ func init() {
 	})
 }
 
-// Run resuelve CPEs y persiste: los CPEs (tabla cpes) y cada CVE NVD que
-// resuelve como vuln record (source=nvd, key=spurl). Best-effort: nunca aborta.
+// Run resolves CPEs and persists: the CPEs (cpes table) and each NVD CVE it
+// resolves as a vuln record (source=nvd, key=spurl). Best-effort: never aborts.
 //
-// El cache es por paquete: CPEs frescos (GetCPEs vs MaxAge) cortocircuitan
-// todo; stale o ausentes → se consulta NVD por CVE (hasta maxLookups).
+// The cache is per package: fresh CPEs (GetCPEs vs MaxAge) short-circuit
+// everything; stale or absent → NVD is queried per CVE (up to maxLookups).
 func Run(ctx context.Context, fetcher NVDFetcher, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) {
 	if cfg.NVDAPIKey == "" || fetcher == nil {
-		return // CPER deshabilitado sin API key
+		return // CPER disabled without API key
 	}
-	// WHY: NVD-by-CPE es backport-unaware. Un purl distro apunta a una build con
-	// fixes backporteados, pero los rangos/CPE de NVD describen el upstream → marcaría
-	// afectado un paquete ya fixeado (falso positivo). Para distros la fuente
-	// autoritativa es OSV.
+	// WHY: NVD-by-CPE is backport-unaware. A distro purl points to a build with
+	// backported fixes, but NVD's ranges/CPEs describe the upstream → it would
+	// flag an already-fixed package as affected (false positive). For distros
+	// the authoritative source is OSV.
 	if id.Kind == purl.KindLinux {
 		return
 	}
 	if cached, _ := cfg.Store.GetCPEs(ctx, spurl); cached.Found && collect.IsFresh(cached.FetchedAt, cfg.MaxAge, now) {
-		return // CPEs frescos: no tocamos NVD
+		return // fresh CPEs: don't touch NVD
 	}
 
 	cves, rangesByCVE := canonicalCVEs(records)
@@ -77,7 +78,7 @@ func Run(ctx context.Context, fetcher NVDFetcher, cfg collect.Config, id purl.Id
 		}
 		nvdCVE, err := fetcher.FetchCVE(ctx, cve)
 		if err != nil || nvdCVE == nil {
-			continue // best-effort: un fetch fallido no aborta el loop
+			continue // best-effort: a failed fetch doesn't abort the loop
 		}
 
 		osvIntervals, osvOk := match.ParseIntervals(rangesByCVE[cve])
@@ -88,8 +89,8 @@ func Run(ctx context.Context, fetcher NVDFetcher, cfg collect.Config, id purl.Id
 		}
 		resolved = append(resolved, accepted...)
 		nvdRecords = append(nvdRecords, nvdVulnRecord(nvdCVE, accepted, spurl, now))
-		// Sin early-stop: un paquete puede mapear a varios CPEs (uno por CVE).
-		// El `seen` deduplica CPEs repetidos entre CVEs.
+		// No early-stop: a package can map to several CPEs (one per CVE).
+		// `seen` deduplicates CPEs repeated across CVEs.
 	}
 
 	_ = cfg.Store.PutCPEs(ctx, spurl, resolved)
@@ -98,12 +99,12 @@ func Run(ctx context.Context, fetcher NVDFetcher, cfg collect.Config, id purl.Id
 	}
 }
 
-// acceptCPEs aplica la regla §3a sobre los matches de una CVE:
+// acceptCPEs applies the §3a rule over a CVE's matches:
 //
 //	(name ∧ vendor) ∨ (name ∧ ecosystem) ∨ range
 //
-// con range estratificado: si name matchea → shared concrete range; si no →
-// OSV ⊆ NVD (subset estricto).
+// with range stratified: if name matches → shared concrete range; otherwise →
+// OSV ⊆ NVD (strict subset).
 func acceptCPEs(nvdCVE *collect.NVDCVE, cve string, names, vendors, osvRanges []string,
 	nameSet, vendorSet map[string]bool, wantSw, ecosystem string,
 	osvIntervals []match.Interval, osvOk bool, seen map[string]bool) []collect.ResolvedCPE {
@@ -129,8 +130,8 @@ func acceptCPEs(nvdCVE *collect.NVDCVE, cve string, names, vendors, osvRanges []
 			}
 		}
 
-		// Reglas de aceptación válidas: (name∧vendor) ∨ (name∧ecosystem) ∨ range.
-		// vendor/name/ecosystem SUELTOS no aceptan — solo en combinación.
+		// Valid acceptance rules: (name∧vendor) ∨ (name∧ecosystem) ∨ range.
+		// vendor/name/ecosystem ALONE don't accept — only in combination.
 		realMatch := (productMatch && vendorMatch) || (productMatch && ecoMatch) || rangeMatch
 		if !realMatch {
 			continue
@@ -140,15 +141,15 @@ func acceptCPEs(nvdCVE *collect.NVDCVE, cve string, names, vendors, osvRanges []
 		}
 		seen[m.PartialCPE] = true
 
-		// Ranges siempre (matcheen o no): NVDRanges = todo lo que NVD declara
-		// para este CPE; OSVRanges = nuestro lado del cruce. Cuando range no
-		// matchea, la UI puede mostrar ambos para explicar el porqué.
+		// Ranges always (whether they match or not): NVDRanges = everything NVD
+		// declares for this CPE; OSVRanges = our side of the cross-check. When
+		// range doesn't match, the UI can show both to explain why.
 		rec := collect.ResolvedCPE{
 			CPE: m.PartialCPE, CVE: cve, NVDVendor: m.Vendor, NVDProduct: m.Product,
 			Ecosystem: ecosystem, Names: names, Vendors: vendors,
 			NVDRanges: m.AffectedRanges, OSVRanges: osvRanges,
 		}
-		// Solo listamos las señales que de verdad contribuyeron a aceptar.
+		// Only list the signals that actually contributed to acceptance.
 		var why []string
 		if productMatch {
 			rec.MatchedBy = append(rec.MatchedBy, "name")
@@ -173,8 +174,8 @@ func acceptCPEs(nvdCVE *collect.NVDCVE, cve string, names, vendors, osvRanges []
 	return out
 }
 
-// nvdVulnRecord arma el vuln record NVD del paquete para una CVE resuelta:
-// header con metadata de NVD, ranges/fixed unión de los CPE aceptados.
+// nvdVulnRecord builds the package's NVD vuln record for a resolved CVE:
+// header with NVD metadata, ranges/fixed as the union of the accepted CPEs.
 func nvdVulnRecord(nvdCVE *collect.NVDCVE, accepted []collect.ResolvedCPE, spurl string, now time.Time) collect.VulnRecord {
 	acceptedCPE := map[string]bool{}
 	for _, a := range accepted {
@@ -215,14 +216,15 @@ func nvdVulnRecord(nvdCVE *collect.NVDCVE, accepted []collect.ResolvedCPE, spurl
 	}
 }
 
-// canonicalCVEs extrae los CVE canónicos de los records (deduplicados) y, por
-// CVE, la unión de sus affected ranges (lado OSV). Los CVE salen ordenados por
-// Published más reciente primero (el Published más nuevo entre sus records).
+// canonicalCVEs extracts the canonical CVEs from the records (deduplicated)
+// and, per CVE, the union of their affected ranges (OSV side). CVEs come out
+// ordered by most recent Published first (the newest Published among their
+// records).
 //
-// WHY: Run corta en maxLookups, así que el orden decide qué CVEs se analizan.
-// Se ordena por Published (vulns más nuevas) y no por Modified: a un CVE viejo
-// cualquier re-enrichment le renueva el Modified y le ganaría a vulns recién
-// publicadas.
+// WHY: Run cuts off at maxLookups, so the order decides which CVEs get
+// analyzed. We sort by Published (newest vulns) and not by Modified: any
+// re-enrichment refreshes an old CVE's Modified, which would let it beat
+// freshly published vulns.
 func canonicalCVEs(records []collect.VulnRecord) (cves []string, rangesByCVE map[string][]string) {
 	rangesByCVE = map[string][]string{}
 	newest := map[string]time.Time{}
@@ -245,8 +247,8 @@ func canonicalCVEs(records []collect.VulnRecord) (cves []string, rangesByCVE map
 	return cves, rangesByCVE
 }
 
-// candidatesFrom arma los candidatos name/vendor del paquete (DD §3a). Lifted
-// de Holmes' pkg/detectives/candidates.go.
+// candidatesFrom builds the package's name/vendor candidates (DD §3a). Lifted
+// from Holmes' pkg/detectives/candidates.go.
 func candidatesFrom(id purl.Identity, repoURL string) (names, vendors []string) {
 	nset, vset := map[string]bool{}, map[string]bool{}
 	addName := func(s string) {
@@ -284,7 +286,7 @@ func candidatesFrom(id purl.Identity, repoURL string) (names, vendors []string) 
 		}
 	}
 
-	// Self-named upstreams (lodash/lodash, curl/curl): promover cada name a
+	// Self-named upstreams (lodash/lodash, curl/curl): promote each name to
 	// vendor candidate.
 	for _, n := range names {
 		addVendor(n)

@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/match"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
@@ -23,25 +26,15 @@ func TestAcceptCPE_NameAndVendor(t *testing.T) {
 		{PartialCPE: "cpe:2.3:a:lodash:lodash", Vendor: "lodash", Product: "lodash",
 			AffectedRanges: []string{"[9.0.0, 9.9.9)"}},
 	}}
-	// OSV trae un range que NO coincide con el de NVD: acepta por name∧vendor.
+	// OSV brings a range that does NOT coincide with NVD's: accepted by name∧vendor.
 	got := acceptOne(t, cve, []string{"lodash"}, []string{"lodash", "npm"},
 		[]string{"[1.0.0, 2.0.0)"}, "node.js", "npm")
-	if len(got) != 1 {
-		t.Fatalf("want 1 accepted, got %d", len(got))
-	}
-	if !hasAll(got[0].MatchedBy, "name", "vendor") {
-		t.Errorf("MatchedBy = %v, want name+vendor", got[0].MatchedBy)
-	}
-	if contains(got[0].MatchedBy, "range") {
-		t.Errorf("MatchedBy = %v, range must not match", got[0].MatchedBy)
-	}
-	// Los ranges se estampan igual aunque la señal range no haya matcheado.
-	if len(got[0].NVDRanges) != 1 || got[0].NVDRanges[0] != "[9.0.0, 9.9.9)" {
-		t.Errorf("NVDRanges = %v", got[0].NVDRanges)
-	}
-	if len(got[0].OSVRanges) != 1 || got[0].OSVRanges[0] != "[1.0.0, 2.0.0)" {
-		t.Errorf("OSVRanges = %v", got[0].OSVRanges)
-	}
+	require.Len(t, got, 1)
+	assert.Subset(t, got[0].MatchedBy, []string{"name", "vendor"})
+	assert.NotContains(t, got[0].MatchedBy, "range")
+	// Ranges are stamped even when the range signal didn't match.
+	assert.Equal(t, []string{"[9.0.0, 9.9.9)"}, got[0].NVDRanges)
+	assert.Equal(t, []string{"[1.0.0, 2.0.0)"}, got[0].OSVRanges)
 }
 
 func TestAcceptCPE_NameAndEcosystem(t *testing.T) {
@@ -50,15 +43,9 @@ func TestAcceptCPE_NameAndEcosystem(t *testing.T) {
 		{PartialCPE: "cpe:2.3:a:acme:chalk", Vendor: "acme", Product: "chalk", TargetSw: "node.js"},
 	}}
 	got := acceptOne(t, cve, []string{"chalk"}, []string{"npm"}, nil, "node.js", "npm")
-	if len(got) != 1 {
-		t.Fatalf("want 1 accepted, got %d", len(got))
-	}
-	if !hasAll(got[0].MatchedBy, "name", "ecosystem") {
-		t.Errorf("MatchedBy = %v, want name+ecosystem", got[0].MatchedBy)
-	}
-	if got[0].NVDTargetSw != "node.js" {
-		t.Errorf("NVDTargetSw = %q", got[0].NVDTargetSw)
-	}
+	require.Len(t, got, 1)
+	assert.Subset(t, got[0].MatchedBy, []string{"name", "ecosystem"})
+	assert.Equal(t, "node.js", got[0].NVDTargetSw)
 }
 
 func TestAcceptCPE_RangeSubsetWhenNoName(t *testing.T) {
@@ -68,16 +55,12 @@ func TestAcceptCPE_RangeSubsetWhenNoName(t *testing.T) {
 			AffectedRanges: []string{"[1.0.0, 2.0.0)"}},
 	}}
 	got := acceptOne(t, cve, []string{"lodash"}, []string{"npm"}, []string{"[1.0.0, 2.0.0)"}, "node.js", "npm")
-	if len(got) != 1 {
-		t.Fatalf("want 1 accepted via range, got %d", len(got))
-	}
-	if !hasAll(got[0].MatchedBy, "range") {
-		t.Errorf("MatchedBy = %v, want range", got[0].MatchedBy)
-	}
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].MatchedBy, "range")
 }
 
 func TestAcceptCPE_RejectsUnrelated(t *testing.T) {
-	// Ninguno matchea name/vendor/ecosystem/range.
+	// None matches name/vendor/ecosystem/range.
 	cve := &collect.NVDCVE{Matches: []collect.NVDCPEMatch{
 		{PartialCPE: "cpe:2.3:a:other:thing", Vendor: "other", Product: "thing",
 			TargetSw: "*", AffectedRanges: []string{"[5.0.0, 6.0.0)"}},
@@ -85,24 +68,19 @@ func TestAcceptCPE_RejectsUnrelated(t *testing.T) {
 			TargetSw: "*", AffectedRanges: []string{"[7.0.0, 8.0.0)"}},
 	}}
 	got := acceptOne(t, cve, []string{"lodash"}, []string{"npm"}, []string{"[1.0.0, 2.0.0)"}, "node.js", "npm")
-	if len(got) != 0 {
-		t.Fatalf("want 0 accepted, got %d (%v)", len(got), got)
-	}
+	assert.Empty(t, got)
 }
 
 func TestCandidatesFrom(t *testing.T) {
 	id := purl.Identity{Type: "npm", Name: "lodash"}
 	names, vendors := candidatesFrom(id, "https://github.com/lodash/lodash")
-	if !contains(names, "lodash") {
-		t.Errorf("names = %v, want lodash", names)
-	}
-	if !contains(vendors, "npm") || !contains(vendors, "lodash") {
-		t.Errorf("vendors = %v, want npm+lodash", vendors)
-	}
+	assert.Contains(t, names, "lodash")
+	assert.Contains(t, vendors, "npm")
+	assert.Contains(t, vendors, "lodash")
 }
 
-// fakeStore es un collect.Store in-memory mínimo: solo cpes y vulns tienen
-// comportamiento real; el resto son no-ops (Run no los toca).
+// fakeStore is a minimal in-memory collect.Store: only cpes and vulns have
+// real behavior; the rest are no-ops (Run doesn't touch them).
 type fakeStore struct {
 	cpes  map[string]collect.StoreResult[[]collect.ResolvedCPE]
 	vulns map[string]collect.StoreResult[[]collect.VulnRecord]
@@ -151,7 +129,7 @@ func (s *fakeStore) QueryVulns(context.Context, collect.VulnQuery) ([]collect.Vu
 }
 func (s *fakeStore) Close() error { return nil }
 
-// stubNVD registra qué CVEs se le pidieron, además de responder por mapa.
+// stubNVD records which CVEs were requested, besides answering from a map.
 type stubNVD struct {
 	byCVE map[string]*collect.NVDCVE
 	asked []string
@@ -165,14 +143,12 @@ func (s *stubNVD) FetchCVE(ctx context.Context, cve string) (*collect.NVDCVE, er
 func identityFor(t *testing.T, coord string) purl.Identity {
 	t.Helper()
 	p, err := purl.Parse(coord)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return purl.Decompose(p)
 }
 
-// TestRunResolvesCPE: el CVE linkeado por ecosyste.ms se resuelve a un CPE vía
-// el stub NVD; quedan persistidos el CPE y el vuln record source=nvd.
+// TestRunResolvesCPE: the CVE linked by ecosyste.ms resolves to a CPE via the
+// NVD stub; the CPE and the source=nvd vuln record end up persisted.
 func TestRunResolvesCPE(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
@@ -195,30 +171,21 @@ func TestRunResolvesCPE(t *testing.T) {
 		spurl, "https://github.com/lodash/lodash", records, time.Now().UTC())
 
 	got, _ := st.GetCPEs(context.Background(), spurl)
-	if !got.Found || len(got.Value) != 1 {
-		t.Fatalf("want 1 resolved CPE, got %+v", got)
-	}
+	require.True(t, got.Found)
+	require.Len(t, got.Value, 1)
 	cpe := got.Value[0]
-	if cpe.CPE != "cpe:2.3:a:lodash:lodash" || cpe.CVE != "CVE-2021-23337" {
-		t.Errorf("cpe = %+v", cpe)
-	}
-	if cpe.Explanation == "" {
-		t.Error("want non-empty explanation")
-	}
-	if !hasAll(cpe.MatchedBy, "name", "ecosystem") {
-		t.Errorf("matchedBy = %v", cpe.MatchedBy)
-	}
+	assert.Equal(t, "cpe:2.3:a:lodash:lodash", cpe.CPE)
+	assert.Equal(t, "CVE-2021-23337", cpe.CVE)
+	assert.NotEmpty(t, cpe.Explanation)
+	assert.Subset(t, cpe.MatchedBy, []string{"name", "ecosystem"})
 
 	vulns, _ := st.GetVulns(context.Background(), collect.SourceNVD, spurl)
-	if !vulns.Found || len(vulns.Value) != 1 {
-		t.Fatalf("want 1 nvd record persisted, got %+v", vulns)
-	}
-	if vulns.Value[0].OriginalID != "CVE-2021-23337" {
-		t.Errorf("nvd record = %+v", vulns.Value[0])
-	}
+	require.True(t, vulns.Found)
+	require.Len(t, vulns.Value, 1)
+	assert.Equal(t, "CVE-2021-23337", vulns.Value[0].OriginalID)
 }
 
-// TestRunFreshCPEsShortCircuit: CPEs frescos en el store → no se toca NVD.
+// TestRunFreshCPEsShortCircuit: fresh CPEs in the store → NVD is not touched.
 func TestRunFreshCPEsShortCircuit(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
@@ -229,14 +196,12 @@ func TestRunFreshCPEsShortCircuit(t *testing.T) {
 	records := []collect.VulnRecord{{OriginalID: "CVE-2021-23337"}}
 	Run(context.Background(), fetcher, cfg, identityFor(t, spurl), spurl, "", records, time.Now().UTC())
 
-	if len(fetcher.asked) != 0 {
-		t.Fatalf("fresh CPEs: want no NVD fetches, got %v", fetcher.asked)
-	}
+	assert.Empty(t, fetcher.asked, "fresh CPEs: want no NVD fetches")
 }
 
-// TestRunSkipsDistro: un purl distro (KindLinux) nunca resuelve CPE ni records
-// source=nvd, aun con NVDAPIKey y un stub que matchearía. NVD-by-CPE es
-// backport-unaware → falsos positivos en distros.
+// TestRunSkipsDistro: a distro purl (KindLinux) never resolves CPEs or
+// source=nvd records, even with NVDAPIKey and a stub that would match.
+// NVD-by-CPE is backport-unaware → false positives on distros.
 func TestRunSkipsDistro(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:deb/debian/curl"
@@ -257,25 +222,23 @@ func TestRunSkipsDistro(t *testing.T) {
 	Run(context.Background(), fetcher, cfg, identityFor(t, "pkg:deb/debian/curl@7.88.1-10+deb12u4"),
 		spurl, "https://github.com/curl/curl", records, time.Now().UTC())
 
-	if len(fetcher.asked) != 0 {
-		t.Errorf("distro: want no NVD fetches, got %v", fetcher.asked)
-	}
-	if got, _ := st.GetCPEs(context.Background(), spurl); got.Found {
-		t.Errorf("distro: want 0 CPEs, got %+v", got.Value)
-	}
+	assert.Empty(t, fetcher.asked, "distro: want no NVD fetches")
+	got, _ := st.GetCPEs(context.Background(), spurl)
+	assert.False(t, got.Found, "distro: want 0 CPEs, got %+v", got.Value)
 }
 
-// TestRunPicksMostRecentlyPublished: con más CVEs que maxLookups, se consultan
-// los maxLookups con Published más reciente, no los primeros de la lista.
-// Modified no influye: un CVE viejo recién re-enriquecido no gana lugar.
+// TestRunPicksMostRecentlyPublished: with more CVEs than maxLookups, the
+// maxLookups with the most recent Published are queried, not the first ones
+// in the list. Modified has no influence: an old CVE freshly re-enriched
+// doesn't earn a spot.
 func TestRunPicksMostRecentlyPublished(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
 	cfg := collect.Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour}
 
-	// 7 CVEs en orden de aparición 2010..2016, Published creciente: los 5 más
-	// nuevos son los ÚLTIMOS de la lista (2012..2016). El más viejo (2010) trae
-	// el Modified más reciente de todos — igual queda afuera.
+	// 7 CVEs in appearance order 2010..2016, increasing Published: the 5
+	// newest are the LAST of the list (2012..2016). The oldest (2010) carries
+	// the most recent Modified of all — it still stays out.
 	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	var records []collect.VulnRecord
 	for i := 0; i < 7; i++ {
@@ -290,30 +253,5 @@ func TestRunPicksMostRecentlyPublished(t *testing.T) {
 	Run(context.Background(), fetcher, cfg, identityFor(t, spurl), spurl, "", records, time.Now().UTC())
 
 	want := []string{"CVE-2016-1", "CVE-2015-1", "CVE-2014-1", "CVE-2013-1", "CVE-2012-1"}
-	if len(fetcher.asked) != len(want) {
-		t.Fatalf("asked = %v, want %v", fetcher.asked, want)
-	}
-	for i := range want {
-		if fetcher.asked[i] != want[i] {
-			t.Fatalf("asked = %v, want %v", fetcher.asked, want)
-		}
-	}
-}
-
-func hasAll(xs []string, want ...string) bool {
-	for _, w := range want {
-		if !contains(xs, w) {
-			return false
-		}
-	}
-	return true
-}
-
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	assert.Equal(t, want, fetcher.asked)
 }
