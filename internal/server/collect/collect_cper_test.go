@@ -12,15 +12,13 @@ import (
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
-// registerCPERStage installs a fake stage 3 for the duration of the test. The
-// real CPER logic is tested in the cper package; here only Collect's contract:
-// it invokes the stage and assembles whatever it left in the store.
-func registerCPERStage(t *testing.T, f func(ctx context.Context, cfg Config, spurl string, records []VulnRecord, now time.Time)) {
-	t.Helper()
-	RegisterCPER(func(ctx context.Context, _ *http.Client, cfg Config, _ purl.Identity, spurl, _ string, records []VulnRecord, now time.Time) {
+// fakeCPERStage adapts a simplified stage func to CPERStage. The real CPER
+// logic is tested in the cper package; here only Collect's contract: it
+// invokes the stage and assembles whatever it left in the store.
+func fakeCPERStage(f func(ctx context.Context, cfg Config, spurl string, records []VulnRecord, now time.Time)) CPERStage {
+	return func(ctx context.Context, _ *http.Client, cfg Config, _ purl.Identity, spurl, _ string, records []VulnRecord, now time.Time) {
 		f(ctx, cfg, spurl, records, now)
-	})
-	t.Cleanup(func() { RegisterCPER(nil) })
+	}
 }
 
 // TestCollectAssemblesCPERStage: what stage 3 persists (CPEs + source=nvd
@@ -28,16 +26,19 @@ func registerCPERStage(t *testing.T, f func(ctx context.Context, cfg Config, spu
 func TestCollectAssemblesCPERStage(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
-	registerEco(t, &stubFetcher{
-		comp: Component{SPURL: spurl, Name: "lodash"},
-		vulns: []VulnRecord{{
-			Source: SourceEcosystems, QueryKey: spurl, OriginalID: "GHSA-x",
-			Aliases: []string{"CVE-2021-23337"}, AffectedRanges: []string{"[*, 4.17.21)"},
-		}},
-	})
-	registerOSV(t, stubOSV{})
+	cfg := testConfig(st,
+		&stubFetcher{
+			comp: Component{SPURL: spurl, Name: "lodash"},
+			vulns: []VulnRecord{{
+				Source: SourceEcosystems, QueryKey: spurl, OriginalID: "GHSA-x",
+				Aliases: []string{"CVE-2021-23337"}, AffectedRanges: []string{"[*, 4.17.21)"},
+			}},
+		},
+		stubOSV{})
+	cfg.NVDAPIKey = "test"
+	cfg.MaxAge = 24 * time.Hour
 
-	registerCPERStage(t, func(ctx context.Context, cfg Config, sp string, records []VulnRecord, now time.Time) {
+	cfg.CPER = fakeCPERStage(func(ctx context.Context, cfg Config, sp string, records []VulnRecord, now time.Time) {
 		assert.NotEmpty(t, records, "stage: want the assembled records")
 		_ = cfg.Store.PutCPEs(ctx, sp, []ResolvedCPE{{CPE: "cpe:2.3:a:lodash:lodash", CVE: "CVE-2021-23337"}})
 		_ = cfg.Store.PutVulns(ctx, SourceNVD, sp, []VulnRecord{{
@@ -46,8 +47,7 @@ func TestCollectAssemblesCPERStage(t *testing.T) {
 		}})
 	})
 
-	res, err := Collect(context.Background(), "pkg:npm/lodash@4.17.20",
-		Config{Store: st, NVDAPIKey: "test", MaxAge: 24 * time.Hour})
+	res, err := Collect(context.Background(), "pkg:npm/lodash@4.17.20", cfg)
 	require.NoError(t, err)
 
 	require.Len(t, res.CPEs, 1)

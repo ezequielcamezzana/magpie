@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -40,16 +39,6 @@ func (noopOSV) Query(ctx context.Context, q purl.OSVQuery) ([]collect.VulnRecord
 	return nil, nil
 }
 
-func TestMain(m *testing.M) {
-	collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
-		return stubFetcher{}
-	})
-	collect.RegisterOSVFetcher(func(httpc *http.Client, logger *slog.Logger) collect.OSVFetcher {
-		return noopOSV{}
-	})
-	os.Exit(m.Run())
-}
-
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	db, err := sqlite.Open(":memory:")
@@ -60,7 +49,7 @@ func newServer(t *testing.T) *httptest.Server {
 
 	r := chi.NewRouter()
 	httpapi.Mount(r, httpapi.Deps{
-		Config: collect.Config{Store: db},
+		Config: collect.Config{Store: db, EcosystemsFetcher: stubFetcher{}, OSVFetcher: noopOSV{}},
 		Logger: slog.Default(),
 	})
 	srv := httptest.NewServer(r)

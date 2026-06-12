@@ -38,14 +38,6 @@ func New(httpc *http.Client, logger *slog.Logger) *Client {
 	return &Client{httpc: httpc, logger: logger, BaseURL: defaultBaseURL}
 }
 
-// WHY: collect.Collect cannot import this package (cycle), so we register
-// the constructor as the real stage-2 fetcher.
-func init() {
-	collect.RegisterOSVFetcher(func(httpc *http.Client, logger *slog.Logger) collect.OSVFetcher {
-		return New(httpc, logger)
-	})
-}
-
 // Query looks up vulnerabilities for an OSV query. The strategy depends on
 // q.Kind; Language and Linux share the same POST query, GitHub is pending.
 func (c *Client) Query(ctx context.Context, q purl.OSVQuery) ([]collect.VulnRecord, error) {

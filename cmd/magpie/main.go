@@ -12,13 +12,10 @@ import (
 
 	"github.com/ezequielcamezzana/magpie/httpapi"
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
+	"github.com/ezequielcamezzana/magpie/internal/server/cper"
+	"github.com/ezequielcamezzana/magpie/internal/server/source/ecosystems"
+	"github.com/ezequielcamezzana/magpie/internal/server/source/osv"
 	"github.com/ezequielcamezzana/magpie/store/sqlite"
-
-	// WHY: registran los fetchers de cada source y el stage CPER (init); sin
-	// estos blank-imports Collect devuelve "not registered" / saltea CPER.
-	_ "github.com/ezequielcamezzana/magpie/internal/server/cper"
-	_ "github.com/ezequielcamezzana/magpie/internal/server/source/ecosystems"
-	_ "github.com/ezequielcamezzana/magpie/internal/server/source/osv"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -66,9 +63,12 @@ func main() {
 	defer db.Close()
 
 	cfg := collect.Config{
-		Store:     db,
-		NVDAPIKey: nvdKey,
-		MaxAge:    maxAge,
+		Store:             db,
+		NVDAPIKey:         nvdKey,
+		MaxAge:            maxAge,
+		EcosystemsFetcher: ecosystems.New(nil, logger),
+		OSVFetcher:        osv.New(nil, logger),
+		CPER:              cper.Stage,
 	}
 
 	r := chi.NewRouter()

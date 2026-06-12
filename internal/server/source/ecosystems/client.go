@@ -65,14 +65,6 @@ func New(httpc *http.Client, logger *slog.Logger) *Client {
 	return &Client{httpc: httpc, logger: logger, BaseURL: defaultBaseURL}
 }
 
-// WHY: collect.Collect cannot import this package (cycle), so we register
-// the constructor as the real stage-1 fetcher.
-func init() {
-	collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
-		return New(httpc, logger)
-	})
-}
-
 // Fetch retrieves package, repository and advisory data for a single SPURL.
 func (c *Client) Fetch(ctx context.Context, spurl string) (collect.Component, *collect.Repository, []collect.VulnRecord, error) {
 	p, err := purl.Parse(spurl)

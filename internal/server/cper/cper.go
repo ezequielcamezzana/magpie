@@ -2,11 +2,8 @@
 // CPE(s) of a package by reading NVD's CPE configurations for the CVEs that
 // OSV/ecosyste.ms already linked, cross-checking 4 signals
 // (name/vendor/ecosystem/range, DD §3a). Lifted from Holmes'
-// pkg/agents/cpe_nvd_learner.go.
-//
-// WHY a separate package: like the sources, it imports magpie (domain
-// types), so magpie cannot import it back — it installs itself via
-// collect.RegisterCPER in init().
+// pkg/agents/cpe_nvd_learner.go. The entrypoint wires Stage into
+// collect.Config.CPER.
 package cper
 
 import (
@@ -33,10 +30,9 @@ type NVDFetcher interface {
 // maxLookups caps how many CVEs are looked up in NVD per Run.
 const maxLookups = 5
 
-func init() {
-	collect.RegisterCPER(func(ctx context.Context, httpc *http.Client, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) {
-		Run(ctx, nvd.New(httpc, slog.Default(), cfg.NVDAPIKey), cfg, id, spurl, repoURL, records, now)
-	})
+// Stage adapts Run to collect.CPERStage, building the real NVD client.
+func Stage(ctx context.Context, httpc *http.Client, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) {
+	Run(ctx, nvd.New(httpc, slog.Default(), cfg.NVDAPIKey), cfg, id, spurl, repoURL, records, now)
 }
 
 // Run resolves CPEs and persists: the CPEs (cpes table) and each NVD CVE it

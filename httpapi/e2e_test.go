@@ -52,29 +52,21 @@ func fakeUpstream(t *testing.T, calls *int64) *httptest.Server {
 	return srv
 }
 
-// useRealEcosystems registra el cliente ecosyste.ms REAL apuntado al upstream
-// fake y restaura el stub de api_test.go al terminar.
-func useRealEcosystems(t *testing.T, upstreamURL string) {
-	t.Helper()
-	collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
-		c := ecosystems.New(httpc, logger)
-		// BaseURL se concatena con "{registry}/packages/{name}", por eso el
-		// trailing slash deja la URL final en /{registry}/packages/{name}.
-		c.BaseURL = upstreamURL + "/"
-		return c
-	})
-	t.Cleanup(func() {
-		collect.RegisterEcosystemsFetcher(func(httpc *http.Client, logger *slog.Logger) collect.EcosystemsFetcher {
-			return stubFetcher{}
-		})
-	})
+// realEcosystems construye el cliente ecosyste.ms REAL apuntado al upstream
+// fake.
+func realEcosystems(upstreamURL string) *ecosystems.Client {
+	c := ecosystems.New(nil, slog.Default())
+	// BaseURL se concatena con "{registry}/packages/{name}", por eso el
+	// trailing slash deja la URL final en /{registry}/packages/{name}.
+	c.BaseURL = upstreamURL + "/"
+	return c
 }
 
-func newE2EServer(t *testing.T, db collect.Store, maxAge time.Duration) *httptest.Server {
+func newE2EServer(t *testing.T, db collect.Store, eco collect.EcosystemsFetcher, maxAge time.Duration) *httptest.Server {
 	t.Helper()
 	r := chi.NewRouter()
 	httpapi.Mount(r, httpapi.Deps{
-		Config: collect.Config{Store: db, MaxAge: maxAge},
+		Config: collect.Config{Store: db, MaxAge: maxAge, EcosystemsFetcher: eco, OSVFetcher: noopOSV{}},
 		Logger: slog.Default(),
 	})
 	srv := httptest.NewServer(r)
@@ -95,8 +87,7 @@ func openMemStore(t *testing.T) collect.Store {
 func TestE2ECollectChalk(t *testing.T) {
 	var calls int64
 	upstream := fakeUpstream(t, &calls)
-	useRealEcosystems(t, upstream.URL)
-	srv := newE2EServer(t, openMemStore(t), time.Hour)
+	srv := newE2EServer(t, openMemStore(t), realEcosystems(upstream.URL), time.Hour)
 
 	resp, err := http.Get(srv.URL + "/collect?purl=pkg:npm/chalk@5.0.0")
 	if err != nil {
@@ -125,9 +116,8 @@ func TestE2ECollectChalk(t *testing.T) {
 func TestE2ECacheHit(t *testing.T) {
 	var calls int64
 	upstream := fakeUpstream(t, &calls)
-	useRealEcosystems(t, upstream.URL)
 	// Mismo store in-memory entre ambos requests → el segundo debe ser cache hit.
-	srv := newE2EServer(t, openMemStore(t), time.Hour)
+	srv := newE2EServer(t, openMemStore(t), realEcosystems(upstream.URL), time.Hour)
 
 	for i := 0; i < 2; i++ {
 		resp, err := http.Get(srv.URL + "/collect?purl=pkg:npm/chalk@5.0.0")
@@ -148,9 +138,8 @@ func TestE2ECacheHit(t *testing.T) {
 func TestE2ECollectMinimist(t *testing.T) {
 	var calls int64
 	upstream := fakeUpstream(t, &calls)
-	useRealEcosystems(t, upstream.URL)
 	db := openMemStore(t)
-	srv := newE2EServer(t, db, time.Hour)
+	srv := newE2EServer(t, db, realEcosystems(upstream.URL), time.Hour)
 
 	resp, err := http.Get(srv.URL + "/collect?purl=pkg:npm/minimist@1.2.0")
 	if err != nil {

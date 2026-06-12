@@ -3,9 +3,6 @@ package collect
 import (
 	"context"
 	"errors"
-	"log/slog"
-	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -41,24 +38,9 @@ func (s stubOSV) Query(ctx context.Context, q purl.OSVQuery) ([]VulnRecord, erro
 	return s.records, s.err
 }
 
-// registerOSV installs an OSVFetcher for the duration of the test, restoring
-// the default no-op when done.
-func registerOSV(t *testing.T, f OSVFetcher) {
-	t.Helper()
-	RegisterOSVFetcher(func(*http.Client, *slog.Logger) OSVFetcher { return f })
-	t.Cleanup(func() {
-		RegisterOSVFetcher(func(*http.Client, *slog.Logger) OSVFetcher { return stubOSV{} })
-	})
-}
-
-func TestMain(m *testing.M) {
-	// Default: stage 1 stub + no-op OSV, so tests expecting empty Errors don't
-	// fail on stage 2's "not registered".
-	RegisterEcosystemsFetcher(func(*http.Client, *slog.Logger) EcosystemsFetcher {
-		return &stubFetcher{comp: Component{Name: "x"}}
-	})
-	RegisterOSVFetcher(func(*http.Client, *slog.Logger) OSVFetcher { return stubOSV{} })
-	os.Exit(m.Run())
+// testConfig builds a Config with the stubs injected.
+func testConfig(st Store, eco EcosystemsFetcher, osvF OSVFetcher) Config {
+	return Config{Store: st, EcosystemsFetcher: eco, OSVFetcher: osvF}
 }
 
 // fakeStore is an in-memory Store for tests.
@@ -127,21 +109,18 @@ func (s *fakeStore) QueryCPEs(ctx context.Context, q CPEQuery) ([]ResolvedCPE, i
 }
 func (s *fakeStore) Close() error { return nil }
 
-// registerEco installs an EcosystemsFetcher for the duration of the test.
-func registerEco(t *testing.T, f EcosystemsFetcher) {
-	t.Helper()
-	RegisterEcosystemsFetcher(func(*http.Client, *slog.Logger) EcosystemsFetcher { return f })
-	t.Cleanup(func() {
-		RegisterEcosystemsFetcher(func(*http.Client, *slog.Logger) EcosystemsFetcher {
-			return &stubFetcher{comp: Component{Name: "x"}}
-		})
-	})
-}
-
 func TestCollectInvalidCoord(t *testing.T) {
-	res, err := Collect(context.Background(), "not-a-purl", Config{Store: newFakeStore()})
+	res, err := Collect(context.Background(), "not-a-purl", testConfig(newFakeStore(), &stubFetcher{}, stubOSV{}))
 	require.Error(t, err)
 	assert.Nil(t, res)
+}
+
+func TestCollectNilFetchers(t *testing.T) {
+	st := newFakeStore()
+	_, err := Collect(context.Background(), "pkg:npm/lodash@4.17.21", testConfig(st, nil, stubOSV{}))
+	require.Error(t, err)
+	_, err = Collect(context.Background(), "pkg:npm/lodash@4.17.21", testConfig(st, &stubFetcher{}, nil))
+	require.Error(t, err)
 }
 
 func TestCollectNilStore(t *testing.T) {
@@ -231,14 +210,15 @@ func TestCollectStage1FetchErrorNotFatal(t *testing.T) {
 
 func TestCollectStage2Matching(t *testing.T) {
 	st := newFakeStore()
-	registerEco(t, &stubFetcher{comp: Component{SPURL: "pkg:npm/x", Name: "x"}})
-	registerOSV(t, stubOSV{records: []VulnRecord{{
-		Source:         SourceOSV,
-		OriginalID:     "GHSA-x",
-		AffectedRanges: []string{"[4.0.0, 6.0.0)"},
-	}}})
+	cfg := testConfig(st,
+		&stubFetcher{comp: Component{SPURL: "pkg:npm/x", Name: "x"}},
+		stubOSV{records: []VulnRecord{{
+			Source:         SourceOSV,
+			OriginalID:     "GHSA-x",
+			AffectedRanges: []string{"[4.0.0, 6.0.0)"},
+		}}})
 
-	res, err := Collect(context.Background(), "pkg:npm/x@5.0.0", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:npm/x@5.0.0", cfg)
 	require.NoError(t, err)
 	require.Empty(t, res.Errors)
 	require.Len(t, res.Groups, 1)
@@ -250,14 +230,15 @@ func TestCollectStage2Matching(t *testing.T) {
 
 func TestCollectNoVersionMatchesAll(t *testing.T) {
 	st := newFakeStore()
-	registerEco(t, &stubFetcher{comp: Component{SPURL: "pkg:npm/x", Name: "x"}})
-	registerOSV(t, stubOSV{records: []VulnRecord{{
-		Source:         SourceOSV,
-		OriginalID:     "GHSA-x",
-		AffectedRanges: []string{"[4.0.0, 6.0.0)"},
-	}}})
+	cfg := testConfig(st,
+		&stubFetcher{comp: Component{SPURL: "pkg:npm/x", Name: "x"}},
+		stubOSV{records: []VulnRecord{{
+			Source:         SourceOSV,
+			OriginalID:     "GHSA-x",
+			AffectedRanges: []string{"[4.0.0, 6.0.0)"},
+		}}})
 
-	res, err := Collect(context.Background(), "pkg:npm/x", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:npm/x", cfg)
 	require.NoError(t, err)
 	require.Len(t, res.Groups, 1)
 	g := res.Groups[0]
@@ -270,14 +251,15 @@ func TestCollectNoVersionMatchesAll(t *testing.T) {
 
 func TestCollectVersionNotAffected(t *testing.T) {
 	st := newFakeStore()
-	registerEco(t, &stubFetcher{comp: Component{SPURL: "pkg:npm/x", Name: "x"}})
-	registerOSV(t, stubOSV{records: []VulnRecord{{
-		Source:         SourceOSV,
-		OriginalID:     "GHSA-x",
-		AffectedRanges: []string{"[4.0.0, 6.0.0)"},
-	}}})
+	cfg := testConfig(st,
+		&stubFetcher{comp: Component{SPURL: "pkg:npm/x", Name: "x"}},
+		stubOSV{records: []VulnRecord{{
+			Source:         SourceOSV,
+			OriginalID:     "GHSA-x",
+			AffectedRanges: []string{"[4.0.0, 6.0.0)"},
+		}}})
 
-	res, err := Collect(context.Background(), "pkg:npm/x@7.0.0", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:npm/x@7.0.0", cfg)
 	require.NoError(t, err)
 	require.Len(t, res.Groups, 1)
 	g := res.Groups[0]
@@ -288,12 +270,13 @@ func TestCollectVersionNotAffected(t *testing.T) {
 func TestCollectSyntheticComponentGitHub(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:github/curl/curl"
-	registerEco(t, &stubFetcher{err: ErrSourceNotApplicable})
-	registerOSV(t, stubOSV{records: []VulnRecord{{
-		Source: SourceOSV, OriginalID: "CVE-2023-1",
-	}}})
+	cfg := testConfig(st,
+		&stubFetcher{err: ErrSourceNotApplicable},
+		stubOSV{records: []VulnRecord{{
+			Source: SourceOSV, OriginalID: "CVE-2023-1",
+		}}})
 
-	res, err := Collect(context.Background(), "pkg:github/curl/curl", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:github/curl/curl", cfg)
 	require.NoError(t, err)
 	require.NotNil(t, res.Component, "want synthetic component")
 	assert.Equal(t, "curl", res.Component.Name)
@@ -306,14 +289,15 @@ func TestCollectSyntheticComponentGitHub(t *testing.T) {
 
 func TestCollectStampsAffectedPackageWhenEmpty(t *testing.T) {
 	st := newFakeStore()
-	registerEco(t, &stubFetcher{err: ErrSourceNotApplicable})
 	// OSV-GIT comes with an empty package (AffectedPackage == "").
-	registerOSV(t, stubOSV{records: []VulnRecord{
-		{Source: SourceOSV, OriginalID: "CVE-2023-1"},
-		{Source: SourceOSV, OriginalID: "CVE-2023-2"},
-	}})
+	cfg := testConfig(st,
+		&stubFetcher{err: ErrSourceNotApplicable},
+		stubOSV{records: []VulnRecord{
+			{Source: SourceOSV, OriginalID: "CVE-2023-1"},
+			{Source: SourceOSV, OriginalID: "CVE-2023-2"},
+		}})
 
-	res, err := Collect(context.Background(), "pkg:github/curl/curl", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:github/curl/curl", cfg)
 	require.NoError(t, err)
 
 	var seen int
@@ -328,13 +312,14 @@ func TestCollectStampsAffectedPackageWhenEmpty(t *testing.T) {
 
 func TestCollectPreservesAffectedPackageFromOSV(t *testing.T) {
 	st := newFakeStore()
-	registerEco(t, &stubFetcher{err: ErrSourceNotApplicable})
 	// OSV does report a purl: it is preserved, not overwritten with the spurl.
-	registerOSV(t, stubOSV{records: []VulnRecord{
-		{Source: SourceOSV, OriginalID: "CVE-2023-1", AffectedPackage: "pkg:generic/curl"},
-	}})
+	cfg := testConfig(st,
+		&stubFetcher{err: ErrSourceNotApplicable},
+		stubOSV{records: []VulnRecord{
+			{Source: SourceOSV, OriginalID: "CVE-2023-1", AffectedPackage: "pkg:generic/curl"},
+		}})
 
-	res, err := Collect(context.Background(), "pkg:github/curl/curl", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:github/curl/curl", cfg)
 	require.NoError(t, err)
 
 	var seen int
@@ -349,10 +334,9 @@ func TestCollectPreservesAffectedPackageFromOSV(t *testing.T) {
 
 func TestCollectNoSynthWithoutVulns(t *testing.T) {
 	st := newFakeStore()
-	registerEco(t, &stubFetcher{err: ErrSourceNotApplicable})
-	registerOSV(t, stubOSV{})
+	cfg := testConfig(st, &stubFetcher{err: ErrSourceNotApplicable}, stubOSV{})
 
-	res, err := Collect(context.Background(), "pkg:github/curl/curl", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:github/curl/curl", cfg)
 	require.NoError(t, err)
 	assert.Nil(t, res.Component, "want nil component (no vulns)")
 	got, _ := st.GetComponent(context.Background(), "pkg:github/curl/curl")
@@ -361,10 +345,11 @@ func TestCollectNoSynthWithoutVulns(t *testing.T) {
 
 func TestCollectRealComponentNotOverwritten(t *testing.T) {
 	st := newFakeStore()
-	registerEco(t, &stubFetcher{comp: Component{SPURL: "pkg:npm/x", Name: "x", RepoURL: "https://github.com/x/x"}})
-	registerOSV(t, stubOSV{records: []VulnRecord{{Source: SourceOSV, OriginalID: "CVE-2020-1"}}})
+	cfg := testConfig(st,
+		&stubFetcher{comp: Component{SPURL: "pkg:npm/x", Name: "x", RepoURL: "https://github.com/x/x"}},
+		stubOSV{records: []VulnRecord{{Source: SourceOSV, OriginalID: "CVE-2020-1"}}})
 
-	res, err := Collect(context.Background(), "pkg:npm/x@1.0.0", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:npm/x@1.0.0", cfg)
 	require.NoError(t, err)
 	require.NotNil(t, res.Component)
 	assert.Equal(t, "x", res.Component.Name)
@@ -375,15 +360,16 @@ func TestCollectGroupsByCanonical(t *testing.T) {
 	st := newFakeStore()
 	// ecosystems returns a record with the CVE in Aliases; osv returns another
 	// with the CVE as OriginalID → same canonical → 1 group, 2 members.
-	registerEco(t, &stubFetcher{
-		comp:  Component{SPURL: "pkg:npm/x", Name: "x"},
-		vulns: []VulnRecord{{Source: SourceEcosystems, OriginalID: "GHSA-x", Aliases: []string{"CVE-2020-1"}}},
-	})
-	registerOSV(t, stubOSV{records: []VulnRecord{{
-		Source: SourceOSV, OriginalID: "CVE-2020-1",
-	}}})
+	cfg := testConfig(st,
+		&stubFetcher{
+			comp:  Component{SPURL: "pkg:npm/x", Name: "x"},
+			vulns: []VulnRecord{{Source: SourceEcosystems, OriginalID: "GHSA-x", Aliases: []string{"CVE-2020-1"}}},
+		},
+		stubOSV{records: []VulnRecord{{
+			Source: SourceOSV, OriginalID: "CVE-2020-1",
+		}}})
 
-	res, err := Collect(context.Background(), "pkg:npm/x@1.0.0", Config{Store: st})
+	res, err := Collect(context.Background(), "pkg:npm/x@1.0.0", cfg)
 	require.NoError(t, err)
 	require.Len(t, res.Groups, 1)
 	g := res.Groups[0]

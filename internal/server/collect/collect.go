@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -19,58 +18,32 @@ import (
 var ErrSourceNotApplicable = errors.New("source not applicable for purl type")
 
 // EcosystemsFetcher is the stage 1 dependency; *ecosystems.Client satisfies
-// it. Exists so it can be stubbed in tests.
-//
-// WHY: exported (not internal) because source/ecosystems must reference it
-// when registering its constructor from another package — see
-// RegisterEcosystemsFetcher.
+// it. Injected via Config so it can be stubbed in tests.
 type EcosystemsFetcher interface {
 	Fetch(ctx context.Context, spurl string) (Component, *Repository, []VulnRecord, error)
 }
 
-// newEcosystemsFetcher builds the real stage 1 fetcher.
-//
-// WHY: source/ecosystems imports this package (it returns Component/etc.), so
-// collect cannot import it back without a cycle. The ecosystems package
-// registers its constructor here in its init().
-var newEcosystemsFetcher func(httpc *http.Client, logger *slog.Logger) EcosystemsFetcher
-
-// RegisterEcosystemsFetcher installs the real fetcher constructor. Called by
-// source/ecosystems in its init().
-func RegisterEcosystemsFetcher(f func(httpc *http.Client, logger *slog.Logger) EcosystemsFetcher) {
-	newEcosystemsFetcher = f
-}
-
-// OSVFetcher is the stage 2 dependency; *osv.Client satisfies it. Mirror of
-// EcosystemsFetcher so it can be stubbed in tests and to avoid the import
-// cycle.
+// OSVFetcher is the stage 2 dependency; *osv.Client satisfies it. Injected
+// via Config so it can be stubbed in tests.
 type OSVFetcher interface {
 	Query(ctx context.Context, q purl.OSVQuery) ([]VulnRecord, error)
 }
 
-var newOSVFetcher func(httpc *http.Client, logger *slog.Logger) OSVFetcher
-
-// RegisterOSVFetcher installs the real OSV fetcher constructor. Called by
-// source/osv in its init().
-func RegisterOSVFetcher(f func(httpc *http.Client, logger *slog.Logger) OSVFetcher) {
-	newOSVFetcher = f
-}
-
-// runCPERStage is stage 3 (CPER), installed by the cper package. Same pattern
-// as the fetchers: cper imports collect, so collect cannot import it back
-// without a cycle. nil = CPER not wired → the stage is skipped.
-var runCPERStage func(ctx context.Context, httpc *http.Client, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time)
-
-// RegisterCPER installs stage 3. Called by the cper package in its init().
-func RegisterCPER(f func(ctx context.Context, httpc *http.Client, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time)) {
-	runCPERStage = f
-}
+// CPERStage is stage 3 (CPE resolution); cper.Stage satisfies it. Optional:
+// nil in Config skips the stage.
+type CPERStage func(ctx context.Context, httpc *http.Client, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time)
 
 // Collect orchestrates the collection pipeline for one coordinate: stage 1
 // (ecosyste.ms), stage 2 (OSV), then assembly + matching + roll-up.
 func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("collect: cfg.Store is nil")
+	}
+	if cfg.EcosystemsFetcher == nil {
+		return nil, errors.New("collect: cfg.EcosystemsFetcher is nil")
+	}
+	if cfg.OSVFetcher == nil {
+		return nil, errors.New("collect: cfg.OSVFetcher is nil")
 	}
 	if coord == "" {
 		return nil, errors.New("collect: empty coord")
@@ -85,20 +58,15 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 		httpClient = http.DefaultClient
 	}
 
-	if newEcosystemsFetcher == nil {
-		return nil, errors.New("collect: ecosystems fetcher not registered (blank-import source/ecosystems)")
-	}
-
 	identity := purl.Decompose(p)
 	spurl := purl.Strip(p)
 	q := identity.OSVQuery()
 	osvKey := q.StoreKey()
 	now := time.Now().UTC()
 
-	fetcher := newEcosystemsFetcher(httpClient, slog.Default())
-	res, errs := collectStage1(ctx, fetcher, cfg.Store, spurl, cfg.MaxAge, now)
+	res, errs := collectStage1(ctx, cfg.EcosystemsFetcher, cfg.Store, spurl, cfg.MaxAge, now)
 
-	errs = append(errs, runOSV(ctx, httpClient, cfg.Store, q, osvKey, spurl, cfg.MaxAge, now)...)
+	errs = append(errs, runOSV(ctx, cfg.OSVFetcher, cfg.Store, q, osvKey, spurl, cfg.MaxAge, now)...)
 
 	// Assembly: reading from the store unifies cache-hit and fresh-fetch.
 	var allRecords []VulnRecord
@@ -117,8 +85,8 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 	if res.Component != nil {
 		repoURL = res.Component.RepoURL
 	}
-	if runCPERStage != nil {
-		runCPERStage(ctx, httpClient, cfg, identity, spurl, repoURL, allRecords, now)
+	if cfg.CPER != nil {
+		cfg.CPER(ctx, httpClient, cfg, identity, spurl, repoURL, allRecords, now)
 	}
 
 	// The NVD records CPER left behind join the bundle (3rd source of the canonical).
@@ -220,20 +188,16 @@ func orderGroups(groups []VulnGroup) {
 
 // runOSV resolves stage 2 (cache-aware, same pattern as stage 1). Returns
 // non-fatal SourceErrors; never aborts the pipeline.
-func runOSV(ctx context.Context, httpc *http.Client, st Store, q purl.OSVQuery, osvKey string, spurl string, maxAge time.Duration, now time.Time) []SourceError {
+func runOSV(ctx context.Context, fetcher OSVFetcher, st Store, q purl.OSVQuery, osvKey string, spurl string, maxAge time.Duration, now time.Time) []SourceError {
 	if osvKey == "" {
 		return nil
-	}
-	if newOSVFetcher == nil {
-		// TODO: distinguish "disabled" from "broke".
-		return []SourceError{{Source: SourceOSV, Kind: "other", Err: errors.New("osv fetcher not registered")}}
 	}
 
 	if cached, _ := st.GetVulns(ctx, SourceOSV, osvKey); cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
 		return nil
 	}
 
-	records, err := newOSVFetcher(httpc, slog.Default()).Query(ctx, q)
+	records, err := fetcher.Query(ctx, q)
 	if err != nil {
 		return []SourceError{{Source: SourceOSV, Kind: "other", Err: fmt.Errorf("osv query: %w", err)}}
 	}
