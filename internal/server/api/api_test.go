@@ -104,16 +104,26 @@ func TestSPADoesNotShadowAPI(t *testing.T) {
 	stubFetchErr = nil
 	srv := newServer(t)
 
-	// GET / serves the embedded HTML.
-	resp, err := http.Get(srv.URL + "/")
+	// GET / redirects to /app.
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := noRedirect.Get(srv.URL + "/")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/app", resp.Header.Get("Location"))
+
+	// GET /app serves the embedded HTML.
+	resp, err = http.Get(srv.URL + "/app")
 	require.NoError(t, err)
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, string(body), "magpie")
 
-	// GET /static/app.css serves the asset with a css content-type.
-	resp, err = http.Get(srv.URL + "/static/app.css")
+	// GET /app/static/app.css serves the asset with a css content-type.
+	resp, err = http.Get(srv.URL + "/app/static/app.css")
 	require.NoError(t, err)
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)

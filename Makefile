@@ -7,9 +7,9 @@ LDFLAGS := -X main.version=$(VERSION)
 
 .PHONY: build install run test vet fmt tidy clean ui-sync
 
-## ui-sync: copia el design system compartido (~/Proyectos/apps/ui) a web/static/ui
+## ui-sync: copia el design system compartido (~/Proyectos/apps/ui) a internal/server/ui/static/ui
 ui-sync:
-	cp $(UI_SRC)/tokens.css $(UI_SRC)/base.css web/static/ui/
+	cp $(UI_SRC)/tokens.css $(UI_SRC)/base.css internal/server/ui/static/ui/
 
 ## build: compila el binario en ./bin/magpie
 build:

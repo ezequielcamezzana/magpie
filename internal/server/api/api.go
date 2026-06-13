@@ -3,10 +3,11 @@ package api
 
 import (
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
-	"github.com/ezequielcamezzana/magpie/web"
+	"github.com/ezequielcamezzana/magpie/internal/server/ui"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -37,7 +38,10 @@ func Mount(r chi.Router, deps Deps) {
 	r.Get("/component", handleComponent(deps))
 	r.Get("/cpes", handleCPEs(deps))
 
-	// WHY: catch-all goes last — chi prioritizes explicit routes (/collect)
-	// over the wildcard, so the SPA doesn't shadow them.
-	r.Handle("/*", web.Handler(deps.Version))
+	// WHY: the SPA is mounted under /app so explicit API routes (/collect)
+	// stay at the root without the wildcard shadowing them.
+	r.Mount("/app", ui.Handler(deps.Version))
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app", http.StatusFound)
+	})
 }
