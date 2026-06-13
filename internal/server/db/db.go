@@ -1,6 +1,6 @@
-// Package sqlite implementa collect.Store sobre SQLite (driver puro Go
-// modernc.org/sqlite) con el schema embebido en schema.sql.
-package sqlite
+// Package db implements collect.Store on SQLite (pure Go driver
+// modernc.org/sqlite) with the schema embedded from schema.sql.
+package db
 
 import (
 	"context"
@@ -27,16 +27,16 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open abre la DB en dsn y ejecuta el schema. Ej: Open("magpie.db") o
-// Open(":memory:") para una DB efímera en tests.
+// Open opens the DB at dsn and runs the schema. E.g. Open("magpie.db") or
+// Open(":memory:") for an ephemeral DB in tests.
 func Open(dsn string) (*Store, error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	// WHY: con database/sql cada conexión :memory: ve una DB distinta y vacía;
-	// limitar a una conexión hace que todo el pool comparta la misma DB.
+	// WHY: with database/sql each :memory: connection sees a distinct, empty DB;
+	// capping at one connection makes the whole pool share the same DB.
 	if isMemory(dsn) {
 		db.SetMaxOpenConns(1)
 	}
@@ -46,10 +46,10 @@ func Open(dsn string) (*Store, error) {
 		return nil, fmt.Errorf("exec schema: %w", err)
 	}
 
-	// Migraciones idempotentes: columnas agregadas después del schema inicial.
-	// CREATE TABLE IF NOT EXISTS no altera tablas existentes, así que las DBs
-	// viejas necesitan el ALTER; en DBs nuevas falla con "duplicate column" y
-	// se ignora.
+	// Idempotent migrations: columns added after the initial schema.
+	// CREATE TABLE IF NOT EXISTS does not alter existing tables, so old DBs
+	// need the ALTER; on fresh DBs it fails with "duplicate column" and is
+	// ignored.
 	for _, stmt := range []string{
 		`ALTER TABLE cpes ADD COLUMN nvd_ranges TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE cpes ADD COLUMN osv_ranges TEXT NOT NULL DEFAULT ''`,
@@ -69,10 +69,10 @@ func (s *Store) Close() error {
 
 const componentColumns = `spurl, name, description, licenses_json, latest_version, repo_url, icon, fetched_at`
 
-// rowScanner abstrae *sql.Row y *sql.Rows para compartir scanComponent.
+// rowScanner abstracts *sql.Row and *sql.Rows so scanComponent can be shared.
 type rowScanner interface{ Scan(dest ...any) error }
 
-// scanComponent reconstruye un Component desde la fila actual.
+// scanComponent rebuilds a Component from the current row.
 func scanComponent(sc rowScanner) (collect.Component, error) {
 	var c collect.Component
 	var licensesJSON, fetchedAt string
@@ -110,7 +110,7 @@ func (s *Store) QueryComponents(ctx context.Context, q collect.ComponentQuery) (
 		args = append(args, q.Name)
 	}
 	if q.Ecosystem != "" {
-		// WHY: el tipo de purl va entre "pkg:" y el primer "/" del spurl.
+		// WHY: the purl type sits between "pkg:" and the first "/" of the spurl.
 		conds = append(conds, "spurl LIKE 'pkg:' || ? || '/%'")
 		args = append(args, q.Ecosystem)
 	}
@@ -159,8 +159,8 @@ func (s *Store) QueryComponents(ctx context.Context, q collect.ComponentQuery) (
 }
 
 func (s *Store) PutComponent(ctx context.Context, c collect.Component) error {
-	// NOTE: nil y slice vacío se persisten ambos como "[]" y vuelven como
-	// slice no-nil de largo 0.
+	// NOTE: nil and empty slice are both persisted as "[]" and come back as a
+	// non-nil slice of length 0.
 	licenses := c.Licenses
 	if licenses == nil {
 		licenses = []string{}
@@ -261,8 +261,8 @@ func (s *Store) GetCPEs(ctx context.Context, spurl string) (collect.StoreResult[
 	return collect.StoreResult[[]collect.ResolvedCPE]{Value: out, FetchedAt: fetchedAt, Found: true}, nil
 }
 
-// PutCPEs reemplaza el set de CPEs de spurl (una fila por CPE) en una tx,
-// stampeando fetched_at = now.
+// PutCPEs replaces the CPE set for spurl (one row per CPE) in a tx,
+// stamping fetched_at = now.
 func (s *Store) PutCPEs(ctx context.Context, spurl string, cpes []collect.ResolvedCPE) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -332,8 +332,8 @@ func matchedByFromBools(mn, mv, me, mr string) []string {
 	return out
 }
 
-// scanCPE reconstruye un ResolvedCPE (incluido SPURL) desde la fila actual y
-// devuelve su fetched_at. El orden de columnas coincide con cpeColumns.
+// scanCPE rebuilds a ResolvedCPE (including SPURL) from the current row and
+// returns its fetched_at. Column order matches cpeColumns.
 func scanCPE(sc rowScanner) (collect.ResolvedCPE, time.Time, error) {
 	var c collect.ResolvedCPE
 	var mn, mv, me, mr, nvdRanges, osvRanges, ft string
@@ -351,8 +351,8 @@ func scanCPE(sc rowScanner) (collect.ResolvedCPE, time.Time, error) {
 	return c, parseTime(ft), nil
 }
 
-// QueryCPEs lista CPEs resueltos (read path para /cpes), buscables por
-// cpe/vendor/product/spurl. Espejo de QueryComponents.
+// QueryCPEs lists resolved CPEs (read path for /cpes), searchable by
+// cpe/vendor/product/spurl. Mirrors QueryComponents.
 func (s *Store) QueryCPEs(ctx context.Context, q collect.CPEQuery) ([]collect.ResolvedCPE, int, error) {
 	where := ""
 	var args []any
@@ -400,10 +400,10 @@ func (s *Store) QueryCPEs(ctx context.Context, q collect.CPEQuery) ([]collect.Re
 	return out, total, nil
 }
 
-// vulnCols proyecta un VulnRecord desde el join package_vuln ⨝ vulns: header
-// (aliases, score, severity, fechas, payload) desde vulns; impacto por paquete
-// (query_key, affected_package, rangos) y la freshness de cache desde
-// package_vuln. El orden debe coincidir con scanVuln.
+// vulnCols projects a VulnRecord from the package_vuln ⨝ vulns join: header
+// (aliases, score, severity, dates, payload) from vulns; per-package impact
+// (query_key, affected_package, ranges) and cache freshness from
+// package_vuln. Order must match scanVuln.
 const vulnCols = `pv.source, pv.query_key, pv.affected_package, pv.original_id,
 	v.canonical_id, v.aliases, v.score, v.severity,
 	pv.affected_versions, pv.affected_ranges, pv.fixed_versions, pv.unaffected_versions,
@@ -421,10 +421,10 @@ func (s *Store) GetVulns(ctx context.Context, source, queryKey string) (collect.
 	defer rows.Close()
 
 	var recs []collect.VulnRecord
-	// WHY: el caller refetchea todo el set por una key si cualquier fila está
-	// stale, así que el FetchedAt del Result es el MIN de las filas. Se calcula
-	// en Go (no MIN() SQL) porque sería un orden lexicográfico de strings que
-	// timestamps con zonas distintas podrían romper.
+	// WHY: the caller refetches the whole set for a key if any row is stale,
+	// so the Result's FetchedAt is the MIN across rows. Computed in Go (not
+	// SQL MIN()) because that would be a lexicographic string order that
+	// timestamps with different zones could break.
 	var minFetched time.Time
 	for rows.Next() {
 		r, fetched, err := scanVuln(rows)
@@ -447,17 +447,17 @@ func (s *Store) GetVulns(ctx context.Context, source, queryKey string) (collect.
 }
 
 func (s *Store) PutVulns(ctx context.Context, source, queryKey string, vs []collect.VulnRecord) error {
-	// WHY: DELETE + INSERTs en una sola tx para que el reemplazo del set sea
-	// atómico; si un INSERT falla (p.ej. original_id duplicado viola la PK de
-	// package_vuln), el rollback deja el set previo intacto.
+	// WHY: DELETE + INSERTs in a single tx so the set replacement is atomic;
+	// if an INSERT fails (e.g. a duplicate original_id violates package_vuln's
+	// PK), the rollback leaves the previous set intact.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	// WHY: el reemplazo del set es por query (package_vuln); el header en vulns
-	// se upsertea y se comparte entre queries, así que no se borra acá.
+	// WHY: the set replacement is per query (package_vuln); the header in vulns
+	// is upserted and shared across queries, so it is not deleted here.
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM package_vuln WHERE source = ? AND query_key = ?`, source, queryKey); err != nil {
 		return fmt.Errorf("delete package_vuln: %w", err)
@@ -485,7 +485,7 @@ func (s *Store) PutVulns(ctx context.Context, source, queryKey string, vs []coll
 			return err
 		}
 
-		// Header de la vuln: upsert, deduplicado por (source, original_id).
+		// Vuln header: upsert, deduplicated by (source, original_id).
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO vulns (source, original_id, canonical_id, aliases, score, severity,
 			                    published_at, modified_at, payload, fetched_at)
@@ -505,8 +505,9 @@ func (s *Store) PutVulns(ctx context.Context, source, queryKey string, vs []coll
 			return fmt.Errorf("upsert vuln %q: %w", v.OriginalID, err)
 		}
 
-		// WARNING: INSERT normal (no OR REPLACE): un original_id duplicado en el
-		// mismo set viola la PK de package_vuln y aborta la tx, no sobrescribe.
+		// WARNING: plain INSERT (no OR REPLACE): a duplicate original_id within
+		// the same set violates package_vuln's PK and aborts the tx, it does
+		// not overwrite.
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO package_vuln (source, query_key, affected_package, original_id,
 			                           affected_versions, affected_ranges, fixed_versions,
@@ -538,8 +539,8 @@ func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.
 		return nil, 0, fmt.Errorf("count vulns: %w", err)
 	}
 
-	// NOTE: clamp mínimo defensivo; los defaults/máximos reales (p.ej. 100) los
-	// aplica el handler.
+	// NOTE: defensive minimum clamp; the real defaults/maximums (e.g. 100) are
+	// applied by the handler.
 	page := q.Page
 	if page <= 0 {
 		page = 1
@@ -550,7 +551,7 @@ func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.
 	}
 	offset := (page - 1) * limit
 
-	// Orden determinístico para que la paginación sea estable.
+	// Deterministic order so pagination is stable.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+vulnCols+vulnJoin+where+
 			` ORDER BY pv.fetched_at DESC, pv.source, pv.query_key, pv.original_id LIMIT ? OFFSET ?`,
@@ -574,8 +575,8 @@ func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.
 	return recs, total, nil
 }
 
-// scanVuln reconstruye un VulnRecord desde la fila actual y devuelve también su
-// fetched_at parseado (para el cálculo de MIN en GetVulns).
+// scanVuln rebuilds a VulnRecord from the current row and also returns its
+// parsed fetched_at (for the MIN computation in GetVulns).
 func scanVuln(rows *sql.Rows) (collect.VulnRecord, time.Time, error) {
 	var r collect.VulnRecord
 	var aliases, affected, ranges, fixed, unaffected, payload string
@@ -637,7 +638,7 @@ func unmarshalList[T any](s string, dst *[]T) error {
 	return nil
 }
 
-// formatTime serializa a RFC3339Nano; el zero time se guarda como "".
+// formatTime serializes to RFC3339Nano; the zero time is stored as "".
 func formatTime(t time.Time) string {
 	if t.IsZero() {
 		return ""

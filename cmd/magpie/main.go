@@ -13,9 +13,9 @@ import (
 	"github.com/ezequielcamezzana/magpie/httpapi"
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/cper"
+	"github.com/ezequielcamezzana/magpie/internal/server/db"
 	"github.com/ezequielcamezzana/magpie/internal/server/source/ecosystems"
 	"github.com/ezequielcamezzana/magpie/internal/server/source/osv"
-	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -55,15 +55,15 @@ func main() {
 		}
 	}
 
-	db, err := sqlite.Open(dbPath)
+	database, err := db.Open(dbPath)
 	if err != nil {
 		logger.Error("open store", "path", dbPath, "err", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer database.Close()
 
 	cfg := collect.Config{
-		Store:             db,
+		Store:             database,
 		NVDAPIKey:         nvdKey,
 		MaxAge:            maxAge,
 		EcosystemsFetcher: ecosystems.New(nil, logger),

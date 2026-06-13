@@ -13,8 +13,8 @@ import (
 
 	"github.com/ezequielcamezzana/magpie/httpapi"
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
+	"github.com/ezequielcamezzana/magpie/internal/server/db"
 	"github.com/ezequielcamezzana/magpie/internal/server/source/ecosystems"
-	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -76,12 +76,12 @@ func newE2EServer(t *testing.T, db collect.Store, eco collect.EcosystemsFetcher,
 
 func openMemStore(t *testing.T) collect.Store {
 	t.Helper()
-	db, err := sqlite.Open(":memory:")
+	database, err := db.Open(":memory:")
 	if err != nil {
-		t.Fatalf("sqlite.Open: %v", err)
+		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	t.Cleanup(func() { database.Close() })
+	return database
 }
 
 func TestE2ECollectChalk(t *testing.T) {

@@ -13,8 +13,8 @@ import (
 
 	"github.com/ezequielcamezzana/magpie/httpapi"
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
+	"github.com/ezequielcamezzana/magpie/internal/server/db"
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
-	"github.com/ezequielcamezzana/magpie/store/sqlite"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -41,15 +41,15 @@ func (noopOSV) Query(ctx context.Context, q purl.OSVQuery) ([]collect.VulnRecord
 
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	db, err := sqlite.Open(":memory:")
+	database, err := db.Open(":memory:")
 	if err != nil {
-		t.Fatalf("sqlite.Open: %v", err)
+		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { database.Close() })
 
 	r := chi.NewRouter()
 	httpapi.Mount(r, httpapi.Deps{
-		Config: collect.Config{Store: db, EcosystemsFetcher: stubFetcher{}, OSVFetcher: noopOSV{}},
+		Config: collect.Config{Store: database, EcosystemsFetcher: stubFetcher{}, OSVFetcher: noopOSV{}},
 		Logger: slog.Default(),
 	})
 	srv := httptest.NewServer(r)

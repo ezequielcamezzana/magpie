@@ -13,7 +13,7 @@ import (
 
 	"github.com/ezequielcamezzana/magpie/httpapi"
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
-	"github.com/ezequielcamezzana/magpie/store/sqlite"
+	"github.com/ezequielcamezzana/magpie/internal/server/db"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -28,19 +28,19 @@ type vulnsResponse struct {
 // newVulnsServer levanta un server con el store seedeado por seed (puede ser nil).
 func newVulnsServer(t *testing.T, seed func(t *testing.T, db collect.Store)) *httptest.Server {
 	t.Helper()
-	db, err := sqlite.Open(":memory:")
+	database, err := db.Open(":memory:")
 	if err != nil {
-		t.Fatalf("sqlite.Open: %v", err)
+		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { database.Close() })
 
 	if seed != nil {
-		seed(t, db)
+		seed(t, database)
 	}
 
 	r := chi.NewRouter()
 	httpapi.Mount(r, httpapi.Deps{
-		Config: collect.Config{Store: db},
+		Config: collect.Config{Store: database},
 		Logger: slog.Default(),
 	})
 	srv := httptest.NewServer(r)
