@@ -1,0 +1,46 @@
+version: 2
+
+project_name: magpie
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: magpie
+    main: ./cmd/magpie
+    binary: magpie
+    env:
+      - CGO_ENABLED=0 # modernc.org/sqlite is pure Go — cross-compiles cleanly
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/ezequielcamezzana/magpie/cmd/magpie/commands.Version={{ .Version }}
+      - -X github.com/ezequielcamezzana/magpie/cmd/magpie/commands.Commit={{ .ShortCommit }}
+      - -X github.com/ezequielcamezzana/magpie/cmd/magpie/commands.Date={{ .Date }}
+
+archives:
+  - id: magpie
+    # No version in the name so `releases/latest/download/magpie_<os>_<arch>.tar.gz`
+    # is a stable URL the installer can rely on.
+    name_template: "magpie_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - docs/**/*
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  draft: false
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
