@@ -3,42 +3,46 @@ CMD     := ./cmd/magpie
 BIN     := bin/$(BINARY)
 UI_SRC  := $(HOME)/Proyectos/apps/ui
 VERSION ?= dev
-LDFLAGS := -X main.version=$(VERSION)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -X github.com/ezequielcamezzana/magpie/cmd/magpie/commands.Version=$(VERSION) \
+           -X github.com/ezequielcamezzana/magpie/cmd/magpie/commands.Commit=$(COMMIT) \
+           -X github.com/ezequielcamezzana/magpie/cmd/magpie/commands.Date=$(DATE)
 
 .PHONY: build install run test vet fmt tidy clean ui-sync
 
-## ui-sync: copia el design system compartido (~/Proyectos/apps/ui) a internal/server/ui/static/ui
+## ui-sync: copy the shared design system (~/Proyectos/apps/ui) into internal/server/ui/static/ui
 ui-sync:
 	cp $(UI_SRC)/tokens.css $(UI_SRC)/base.css internal/server/ui/static/ui/
 
-## build: compila el binario en ./bin/magpie
+## build: build the binary into ./bin/magpie
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) $(CMD)
 
-## install: instala el binario global (go env GOPATH/bin, en tu PATH)
+## install: install the binary globally (go env GOPATH/bin, on your PATH)
 install:
 	go install -ldflags "$(LDFLAGS)" $(CMD)
 
-## run: corre el server desde el código (sin instalar)
+## run: run the server from source (without installing)
 run:
 	go run -ldflags "$(LDFLAGS)" $(CMD)
 
-## test: corre toda la suite
+## test: run the full suite
 test:
 	go test ./...
 
-## vet: análisis estático
+## vet: static analysis
 vet:
 	go vet ./...
 
-## fmt: formatea el código
+## fmt: format the code
 fmt:
 	go fmt ./...
 
-## tidy: ordena go.mod/go.sum
+## tidy: tidy go.mod/go.sum
 tidy:
 	go mod tidy
 
-## clean: borra binarios locales y la DB de dev
+## clean: remove local binaries and the dev DB
 clean:
 	rm -rf bin $(BINARY) magpie.db magpie.db-journal
