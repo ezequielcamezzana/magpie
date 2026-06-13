@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ezequielcamezzana/magpie/httpapi"
+	"github.com/ezequielcamezzana/magpie/internal/server/api"
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/config"
 	"github.com/ezequielcamezzana/magpie/internal/server/cper"
@@ -57,7 +57,7 @@ func main() {
 	}
 
 	r := chi.NewRouter()
-	httpapi.Mount(r, httpapi.Deps{Config: collectCfg, Logger: logger, Version: version, RequestTimeout: cfg.RequestTimeout})
+	api.Mount(r, api.Deps{Config: collectCfg, Logger: logger, Version: version, RequestTimeout: cfg.RequestTimeout})
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: r}
 

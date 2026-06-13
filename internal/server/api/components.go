@@ -1,4 +1,4 @@
-package httpapi
+package api
 
 import (
 	"net/http"
@@ -39,7 +39,7 @@ func handleComponents(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		// WHY: lista vacía, no null — el FE itera sin chequear nil.
+		// WHY: empty list, not null — the FE iterates without checking nil.
 		if comps == nil {
 			comps = []collect.Component{}
 		}

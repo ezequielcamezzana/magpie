@@ -1,4 +1,4 @@
-package httpapi
+package api
 
 import (
 	"net/http"
@@ -28,8 +28,8 @@ func handleVulnerabilities(deps Deps) http.HandlerFunc {
 		if l, err := strconv.Atoi(q.Get("limit")); err == nil && l >= 1 {
 			limit = l
 		}
-		// WHY: 100 es el máximo del DD §8; clampamos para no dejar que el cliente
-		// pida páginas arbitrariamente grandes.
+		// WHY: 100 is the DD §8 maximum; we clamp so the client can't request
+		// arbitrarily large pages.
 		if limit > 100 {
 			limit = 100
 		}
@@ -42,7 +42,7 @@ func handleVulnerabilities(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		// WHY: lista vacía, no null — el FE itera sobre records sin chequear nil.
+		// WHY: empty list, not null — the FE iterates over records without checking nil.
 		if recs == nil {
 			recs = []collect.VulnRecord{}
 		}

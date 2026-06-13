@@ -1,4 +1,4 @@
-package httpapi
+package api
 
 import (
 	"net/http"
@@ -14,8 +14,8 @@ type cpesResponse struct {
 	Total int                   `json:"total"`
 }
 
-// handleCPEs es el índice global de CPEs resueltos, buscable por
-// cpe/vendor/product/spurl. Espejo de handleComponents.
+// handleCPEs is the global index of resolved CPEs, searchable by
+// cpe/vendor/product/spurl. Mirror of handleComponents.
 func handleCPEs(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

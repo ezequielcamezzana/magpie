@@ -1,4 +1,4 @@
-package httpapi_test
+package api_test
 
 import (
 	"context"
@@ -7,15 +7,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/ezequielcamezzana/magpie/httpapi"
+	"github.com/ezequielcamezzana/magpie/internal/server/api"
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 	"github.com/ezequielcamezzana/magpie/internal/server/db"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type vulnsResponse struct {
@@ -25,13 +26,11 @@ type vulnsResponse struct {
 	Total   int                  `json:"total"`
 }
 
-// newVulnsServer levanta un server con el store seedeado por seed (puede ser nil).
+// newVulnsServer brings up a server with the store seeded by seed (may be nil).
 func newVulnsServer(t *testing.T, seed func(t *testing.T, db collect.Store)) *httptest.Server {
 	t.Helper()
 	database, err := db.Open(":memory:")
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
+	require.NoError(t, err, "db.Open")
 	t.Cleanup(func() { database.Close() })
 
 	if seed != nil {
@@ -39,7 +38,7 @@ func newVulnsServer(t *testing.T, seed func(t *testing.T, db collect.Store)) *ht
 	}
 
 	r := chi.NewRouter()
-	httpapi.Mount(r, httpapi.Deps{
+	api.Mount(r, api.Deps{
 		Config: collect.Config{Store: database},
 		Logger: slog.Default(),
 	})
@@ -51,68 +50,45 @@ func newVulnsServer(t *testing.T, seed func(t *testing.T, db collect.Store)) *ht
 func getVulns(t *testing.T, srv *httptest.Server, query string) (*http.Response, vulnsResponse) {
 	t.Helper()
 	resp, err := http.Get(srv.URL + "/vulnerabilities" + query)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var out vulnsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		resp.Body.Close()
-		t.Fatalf("decode: %v", err)
-	}
+	err = json.NewDecoder(resp.Body).Decode(&out)
 	resp.Body.Close()
+	require.NoError(t, err, "decode")
 	return resp, out
 }
 
 func TestVulnsFilterByOriginalID(t *testing.T) {
 	srv := newVulnsServer(t, func(t *testing.T, db collect.Store) {
-		if err := db.PutVulns(context.Background(), "ecosyste.ms", "k1", []collect.VulnRecord{
+		require.NoError(t, db.PutVulns(context.Background(), "ecosyste.ms", "k1", []collect.VulnRecord{
 			{OriginalID: "GHSA-abc", CanonicalID: "CVE-2024-1", Source: "ecosyste.ms", FetchedAt: time.Now()},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.PutVulns(context.Background(), "osv", "k2", []collect.VulnRecord{
+		}))
+		require.NoError(t, db.PutVulns(context.Background(), "osv", "k2", []collect.VulnRecord{
 			{OriginalID: "CVE-2024-1", CanonicalID: "CVE-2024-1", Source: "osv", FetchedAt: time.Now()},
-		}); err != nil {
-			t.Fatal(err)
-		}
+		}))
 	})
 
 	resp, out := getVulns(t, srv, "?id=GHSA-abc")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if out.Total != 1 {
-		t.Fatalf("total = %d, want 1", out.Total)
-	}
-	if len(out.Records) != 1 || out.Records[0].OriginalID != "GHSA-abc" {
-		t.Fatalf("records = %+v, want single GHSA-abc", out.Records)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 1, out.Total)
+	require.Len(t, out.Records, 1)
+	assert.Equal(t, "GHSA-abc", out.Records[0].OriginalID)
 }
 
 func TestVulnsFilterByCanonicalID(t *testing.T) {
 	srv := newVulnsServer(t, func(t *testing.T, db collect.Store) {
-		if err := db.PutVulns(context.Background(), "ecosyste.ms", "k1", []collect.VulnRecord{
+		require.NoError(t, db.PutVulns(context.Background(), "ecosyste.ms", "k1", []collect.VulnRecord{
 			{OriginalID: "GHSA-abc", CanonicalID: "CVE-2024-1", Source: "ecosyste.ms", FetchedAt: time.Now()},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.PutVulns(context.Background(), "osv", "k2", []collect.VulnRecord{
+		}))
+		require.NoError(t, db.PutVulns(context.Background(), "osv", "k2", []collect.VulnRecord{
 			{OriginalID: "CVE-2024-1", CanonicalID: "CVE-2024-1", Source: "osv", FetchedAt: time.Now()},
-		}); err != nil {
-			t.Fatal(err)
-		}
+		}))
 	})
 
 	resp, out := getVulns(t, srv, "?id=CVE-2024-1")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if out.Total < 2 {
-		t.Fatalf("total = %d, want >= 2", out.Total)
-	}
-	if len(out.Records) < 2 {
-		t.Fatalf("len(records) = %d, want >= 2", len(out.Records))
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.GreaterOrEqual(t, out.Total, 2)
+	assert.GreaterOrEqual(t, len(out.Records), 2)
 }
 
 func TestVulnsPagination(t *testing.T) {
@@ -128,32 +104,22 @@ func TestVulnsPagination(t *testing.T) {
 				FetchedAt:   base.Add(time.Duration(i) * time.Second),
 			})
 		}
-		if err := db.PutVulns(context.Background(), "osv", "k", recs); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, db.PutVulns(context.Background(), "osv", "k", recs))
 	})
 
 	_, p1 := getVulns(t, srv, "?page=1&limit=2")
-	if p1.Total != n {
-		t.Fatalf("page1 total = %d, want %d", p1.Total, n)
-	}
-	if len(p1.Records) != 2 {
-		t.Fatalf("page1 len = %d, want 2", len(p1.Records))
-	}
+	assert.Equal(t, n, p1.Total)
+	require.Len(t, p1.Records, 2)
 
 	_, p2 := getVulns(t, srv, "?page=2&limit=2")
-	if len(p2.Records) != 2 {
-		t.Fatalf("page2 len = %d, want 2", len(p2.Records))
-	}
+	require.Len(t, p2.Records, 2)
 
 	seen := map[string]bool{}
 	for _, r := range p1.Records {
 		seen[r.OriginalID] = true
 	}
 	for _, r := range p2.Records {
-		if seen[r.OriginalID] {
-			t.Fatalf("page2 overlaps page1 on %q", r.OriginalID)
-		}
+		assert.False(t, seen[r.OriginalID], "page2 overlaps page1 on %q", r.OriginalID)
 	}
 }
 
@@ -161,47 +127,29 @@ func TestVulnsLimitClamp(t *testing.T) {
 	srv := newVulnsServer(t, nil)
 
 	resp, out := getVulns(t, srv, "?limit=999")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if out.Limit != 100 {
-		t.Fatalf("limit = %d, want clamped to 100", out.Limit)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 100, out.Limit, "limit should be clamped to 100")
 }
 
 func TestVulnsEmptyIsArray(t *testing.T) {
 	srv := newVulnsServer(t, nil)
 
 	resp, err := http.Get(srv.URL + "/vulnerabilities")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if !strings.Contains(string(body), `"records":[]`) {
-		t.Fatalf("records should serialize as [], got: %s", body)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), `"records":[]`, "records should serialize as []")
 
 	var out vulnsResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.Total != 0 {
-		t.Fatalf("total = %d, want 0", out.Total)
-	}
+	require.NoError(t, json.Unmarshal(body, &out))
+	assert.Equal(t, 0, out.Total)
 }
 
 func TestVulnsDefaults(t *testing.T) {
 	srv := newVulnsServer(t, nil)
 
 	_, out := getVulns(t, srv, "")
-	if out.Page != 1 {
-		t.Fatalf("page = %d, want 1", out.Page)
-	}
-	if out.Limit != 25 {
-		t.Fatalf("limit = %d, want 25", out.Limit)
-	}
+	assert.Equal(t, 1, out.Page)
+	assert.Equal(t, 25, out.Limit)
 }

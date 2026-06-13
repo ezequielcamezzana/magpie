@@ -1,4 +1,4 @@
-package httpapi
+package api
 
 import (
 	"net/http"
@@ -8,13 +8,13 @@ import (
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
-// vulnPageSize es la cantidad de grupos de vuln por página (el BE pagina tras
-// agrupar y ordenar).
+// vulnPageSize is the number of vuln groups per page (the BE paginates after
+// grouping and ordering).
 const vulnPageSize = 10
 
-// vulnPage es el meta de paginación de vulns que acompaña al bundle. All y
-// Affected son conteos globales (para las tabs); Total/Pages son del set ya
-// filtrado por Filter.
+// vulnPage is the vuln pagination meta that accompanies the bundle. All and
+// Affected are global counts (for the tabs); Total/Pages are for the set
+// already filtered by Filter.
 type vulnPage struct {
 	Page     int    `json:"Page"`
 	Pages    int    `json:"Pages"`
@@ -25,7 +25,7 @@ type vulnPage struct {
 	Filter   string `json:"Filter"`
 }
 
-// parseVulnParams lee vpage/vorder/vfilter (defaults: page 1, severity, all).
+// parseVulnParams reads vpage/vorder/vfilter (defaults: page 1, severity, all).
 func parseVulnParams(r *http.Request) (vpage int, vorder, vfilter string) {
 	vpage = 1
 	if p, err := strconv.Atoi(r.URL.Query().Get("vpage")); err == nil && p >= 1 {
@@ -42,9 +42,10 @@ func parseVulnParams(r *http.Request) (vpage int, vorder, vfilter string) {
 	return vpage, vorder, vfilter
 }
 
-// paginateGroups ordena (vorder), filtra (vfilter) y pagina los grupos ya
-// ensamblados. El filtro se aplica ANTES de paginar (por eso la página nunca
-// queda vacía cuando hay matches). El meta trae los conteos globales.
+// paginateGroups orders (vorder), filters (vfilter) and paginates the
+// already-assembled groups. The filter is applied BEFORE paginating (so the
+// page is never empty when there are matches). The meta carries the global
+// counts.
 func paginateGroups(groups []collect.VulnGroup, vpage int, vorder, vfilter string) ([]collect.VulnGroup, vulnPage) {
 	all := len(groups)
 	affected := 0
@@ -54,8 +55,8 @@ func paginateGroups(groups []collect.VulnGroup, vpage int, vorder, vfilter strin
 		}
 	}
 
-	// WHY: severity ya viene aplicado por Collect.orderGroups; solo reordenamos
-	// para "recent" (Updated desc, desempate por MaxScore desc).
+	// WHY: severity is already applied by Collect.orderGroups; we only reorder
+	// for "recent" (Updated desc, tie-break by MaxScore desc).
 	if vorder == "recent" {
 		sort.SliceStable(groups, func(i, j int) bool {
 			if !groups[i].Updated.Equal(groups[j].Updated) {
@@ -99,8 +100,8 @@ func paginateGroups(groups []collect.VulnGroup, vpage int, vorder, vfilter strin
 	}
 }
 
-// writeBundle serializa el Result (con Groups ya recortado a la página) más el
-// meta de paginación de vulns. Serializer compartido por /collect y /component.
+// writeBundle serializes the Result (with Groups already trimmed to the page)
+// plus the vuln pagination meta. Shared serializer for /collect and /component.
 func writeBundle(w http.ResponseWriter, res *collect.Result, meta vulnPage) {
 	writeJSON(w, http.StatusOK, struct {
 		*collect.Result

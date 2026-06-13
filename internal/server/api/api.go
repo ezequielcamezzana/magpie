@@ -1,5 +1,5 @@
-// Package httpapi expone el pipeline collect.Collect sobre HTTP con chi.
-package httpapi
+// Package api exposes the collect.Collect pipeline over HTTP with chi.
+package api
 
 import (
 	"log/slog"
@@ -19,7 +19,7 @@ type Deps struct {
 	RequestTimeout time.Duration
 }
 
-// Mount instala middleware y rutas sobre r.
+// Mount installs middleware and routes on r.
 func Mount(r chi.Router, deps Deps) {
 	timeout := deps.RequestTimeout
 	if timeout == 0 {
@@ -37,7 +37,7 @@ func Mount(r chi.Router, deps Deps) {
 	r.Get("/component", handleComponent(deps))
 	r.Get("/cpes", handleCPEs(deps))
 
-	// WHY: catch-all al final — chi prioriza las rutas explícitas (/collect)
-	// sobre el wildcard, así que la SPA no las pisa.
+	// WHY: catch-all goes last — chi prioritizes explicit routes (/collect)
+	// over the wildcard, so the SPA doesn't shadow them.
 	r.Handle("/*", web.Handler(deps.Version))
 }

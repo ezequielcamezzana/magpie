@@ -1,4 +1,4 @@
-package httpapi
+package api
 
 import (
 	"net/http"
@@ -7,9 +7,9 @@ import (
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
-// handleComponent sirve el bundle de un paquete (datos + repo + vulns) SIN versión:
-// devuelve todas las vulns que afectan al paquete (no a una versión puntual). Mismo
-// layout/serializer que /collect, pero sin filtro affected.
+// handleComponent serves a package bundle (data + repo + vulns) WITHOUT a version:
+// it returns every vuln that affects the package (not a specific version). Same
+// layout/serializer as /collect, but without the affected filter.
 func handleComponent(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		spurl := r.URL.Query().Get("spurl")
@@ -18,8 +18,8 @@ func handleComponent(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		// WHY: el detalle de componente es por paquete, no por versión. Strip
-		// descarta cualquier versión que venga en el coord → match "todas afectan".
+		// WHY: the component detail is per package, not per version. Strip drops
+		// any version present in the coord → "all affect" match.
 		p, err := purl.Parse(spurl)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -27,16 +27,16 @@ func handleComponent(deps Deps) http.HandlerFunc {
 		}
 		stripped := purl.Strip(p)
 
-		// WHY: la página de componente lee SOLO de la DB (sin red); FromStore no
-		// invoca fetchers, así que no hay errores de ecosyste.ms/OSV acá.
+		// WHY: the component page reads ONLY from the DB (no network); FromStore
+		// doesn't invoke fetchers, so there are no ecosyste.ms/OSV errors here.
 		result, err := collect.FromStore(r.Context(), stripped, deps.Config.Store)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 
-		// WHY: la página de componente no tiene filtro affected (no hay versión);
-		// siempre "all".
+		// WHY: the component page has no affected filter (there's no version);
+		// always "all".
 		vpage, vorder, _ := parseVulnParams(r)
 		page, meta := paginateGroups(result.Groups, vpage, vorder, "all")
 		result.Groups = page

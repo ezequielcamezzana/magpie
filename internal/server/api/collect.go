@@ -1,4 +1,4 @@
-package httpapi
+package api
 
 import (
 	"encoding/json"
@@ -20,14 +20,14 @@ func handleCollect(deps Deps) http.HandlerFunc {
 
 		result, err := collect.Collect(r.Context(), coord, deps.Config)
 		if err != nil {
-			// WHY: el coord es input del usuario; un parse error es bad request.
-			// TODO: distinguir 400 (coord inválida) de 500 (config rota).
+			// WHY: the coord is user input; a parse error is a bad request.
+			// TODO: distinguish 400 (invalid coord) from 500 (broken config).
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 
-		// WHY: Result.Errors no-vacío es partial failure, no fallo total — el
-		// status sigue 200 con el array errors poblado.
+		// WHY: a non-empty Result.Errors is a partial failure, not a total one —
+		// the status stays 200 with the errors array populated.
 		vpage, vorder, vfilter := parseVulnParams(r)
 		page, meta := paginateGroups(result.Groups, vpage, vorder, vfilter)
 		result.Groups = page
