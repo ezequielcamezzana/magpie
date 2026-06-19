@@ -27,29 +27,6 @@ type Repository struct {
 	FetchedAt   time.Time
 }
 
-// NVDCVE is the slice of an NVD CVE record that CPER consumes: metadata to
-// persist as an nvd vuln record, plus the per-(vendor:product) CPE matches used
-// to resolve the package's CPE.
-type NVDCVE struct {
-	ID        string
-	Score     float64
-	Severity  string
-	Published time.Time
-	Modified  time.Time
-	Matches   []NVDCPEMatch
-}
-
-// NVDCPEMatch is one (vendor, product) CPE NVD declares vulnerable for a CVE,
-// with the version intervals and target_sw it pins.
-type NVDCPEMatch struct {
-	PartialCPE     string // cpe:2.3:a:vendor:product
-	Vendor         string
-	Product        string
-	TargetSw       string   // CPE part 10; "" or "*" when unset
-	AffectedRanges []string // "[lo, hi)" intervals
-	FixedVersions  []string
-}
-
 type ResolvedCPE struct {
 	SPURL       string // associated package (populated when reading from the DB)
 	CPE         string
@@ -69,10 +46,12 @@ type ResolvedCPE struct {
 type VulnRecord struct {
 	Source             string
 	QueryKey           string
-	AffectedPackage    string
+	AffectedPackage    string // the affected component, always a purl
+	MatchedOn          string // identifier matched: the purl (OSV/eco) or the CPE (NVD)
 	OriginalID         string
 	Aliases            []string
 	CanonicalID        string
+	Summary            string // OSV summary||details, NVD description, eco description
 	Score              float64
 	Severity           string
 	AffectedVersions   []string
@@ -97,6 +76,7 @@ type VulnGroup struct {
 	CanonicalID string
 	MaxScore    float64
 	Affected    bool      // level 2 roll-up
+	Summary     string    // best member summary, source priority nvd > osv > eco
 	Created     time.Time // oldest Published among the members
 	Updated     time.Time // newest Modified among the members
 	Members     []VulnMember

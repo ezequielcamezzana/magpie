@@ -30,7 +30,7 @@ func fixtureServer(t *testing.T) *httptest.Server {
 }
 
 func newTestClient(t *testing.T, baseURL string) *Client {
-	c := New(nil, nil)
+	c := New(nil)
 	c.BaseURL = baseURL
 	return c
 }

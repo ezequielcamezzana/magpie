@@ -38,14 +38,23 @@
                     (v.OriginalID || v.CanonicalID)
                 );
             }
+            // NVD record URL — only shown for NVD-sourced records (id is the CVE).
+            function nvdURL(v) {
+                const cve = v.CanonicalID || v.OriginalID;
+                return cve
+                    ? "https://nvd.nist.gov/vuln/detail/" + cve
+                    : "";
+            }
 
             // Grouped advisory card (.vc-card) helpers — Collect view.
             function vcLabel(s) {
                 const b = svcBucket(s);
                 return b === "none" ? "unknown" : b;
             }
-            // Advisory title/summary from the raw payload (ecosyste.ms: title, osv: summary).
+            // Advisory summary: the persisted Summary column (OSV summary||details,
+            // NVD description, eco description), falling back to the raw payload.
             function recTitle(r) {
+                if (r.Summary) return r.Summary;
                 const p = r.Payload || {};
                 return p.title || p.summary || "";
             }
@@ -99,21 +108,78 @@
                 return years === 1 ? "1 year ago" : years + " years ago";
             }
 
+            // SPA routing on the History API (paths, not hashes). Everything is
+            // mounted under /app (see ui.go), so routes are path-relative to it:
+            // "" / "collect" → collect, "components"/"vulns"/"cpes" → sections,
+            // "component/<spurl>" and "vuln/<id>" → detail pages.
+            const BASE = "/app";
+
+            // route returns the current path relative to BASE, no leading slash.
+            function route() {
+                let p = location.pathname;
+                if (p.startsWith(BASE)) p = p.slice(BASE.length);
+                return p.replace(/^\/+/, "");
+            }
+
+            // nav pushes a route-relative path (optionally with ?query) and tells
+            // the views to re-sync. A synthetic popstate keeps router, bundleView
+            // and vulnDetail on the same notification as the back/forward buttons.
+            function nav(to) {
+                history.pushState({}, "", BASE + "/" + to);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+            }
+
             function router() {
-                const fromHash = () => {
-                    const h = location.hash.slice(1);
-                    if (h.startsWith("vuln/")) return "vuln";
-                    if (h.startsWith("component/")) return "component";
-                    return ["vulns", "components", "cpes"].includes(h) ? h : "collect";
+                const fromPath = () => {
+                    const r = route();
+                    if (r.startsWith("vuln/")) return "vuln";
+                    if (r.startsWith("component/")) return "component";
+                    return ["vulns", "components", "cpes"].includes(r) ? r : "collect";
                 };
                 return {
-                    view: fromHash(),
+                    view: fromPath(),
+                    sources: {},
+                    init() {
+                        this.loadHealth();
+                        // Poll so the dots stay live across pages.
+                        setInterval(() => this.loadHealth(), 30000);
+                    },
+                    async loadHealth() {
+                        try {
+                            const r = await fetch("/metrics");
+                            if (r.ok)
+                                this.sources = (await r.json()).sources || {};
+                        } catch (e) {
+                            /* health is non-critical */
+                        }
+                    },
+                    srcStatus(src) {
+                        const h = this.sources[src];
+                        return (h && h.status) || "unknown";
+                    },
+                    srcLabel(src) {
+                        return { "ecosyste.ms": "eco", osv: "osv", nvd: "nvd", vulncheck: "vc" }[src] || src;
+                    },
+                    srcTip(src) {
+                        const h = this.sources[src];
+                        if (!h || h.status === "unknown")
+                            return src + " — no data yet";
+                        return (
+                            src +
+                            " — " +
+                            h.status +
+                            " · " +
+                            h.avgMs +
+                            "ms · " +
+                            h.samples +
+                            " reqs"
+                        );
+                    },
                     sync() {
-                        this.view = fromHash();
+                        this.view = fromPath();
                     },
                     go(v) {
-                        this.view = v;
-                        location.hash = "#" + v;
+                        nav(v);
                     },
                 };
             }
@@ -129,6 +195,7 @@
                     loading: false,
                     result: null,
                     error: null,
+                    metrics: null,
                     groupFilter: "affected",
                     expanded: {},
                     vpage: 1,
@@ -144,12 +211,22 @@
                     },
                     _h: null,
                     init() {
+                        if (this.mode === "collect") {
+                            this.loadMetrics();
+                            // Deep link: /app/collect?purl=… loads the page and
+                            // launches the collect for that purl.
+                            const purl = new URLSearchParams(location.search).get("purl");
+                            if (purl) {
+                                this.coord = purl;
+                                this.run();
+                            }
+                        }
                         if (this.mode === "component") {
-                            this.spurl = this.spurlFromHash();
+                            this.spurl = this.spurlFromPath();
                             this.load();
                             // X→Y dentro de la misma vista component: recargar al cambiar el spurl.
                             this._h = () => {
-                                const s = this.spurlFromHash();
+                                const s = this.spurlFromPath();
                                 if (s && s !== this.spurl) {
                                     this.spurl = s;
                                     this.vpage = 1;
@@ -157,15 +234,15 @@
                                     this.load();
                                 }
                             };
-                            window.addEventListener("hashchange", this._h);
+                            window.addEventListener("popstate", this._h);
                         }
                     },
                     destroy() {
                         if (this._h)
-                            window.removeEventListener("hashchange", this._h);
+                            window.removeEventListener("popstate", this._h);
                     },
-                    spurlFromHash() {
-                        const m = location.hash.match(/^#component\/(.+)$/);
+                    spurlFromPath() {
+                        const m = route().match(/^component\/(.+)$/);
                         return m ? decodeURIComponent(m[1]) : "";
                     },
                     // Prepend "pkg:" so the user never has to type it (idempotent if pasted).
@@ -175,10 +252,29 @@
                         return c.startsWith("pkg:") ? c : "pkg:" + c;
                     },
                     run() {
-                        if (!this.normalizedCoord()) return;
+                        const coord = this.normalizedCoord();
+                        if (!coord) return;
+                        // Reflect the collected purl in the URL so it's a
+                        // shareable deep link. replaceState (not push) keeps the
+                        // back button clean across successive collects.
+                        history.replaceState(
+                            {},
+                            "",
+                            BASE + "/collect?purl=" + encodeURIComponent(coord),
+                        );
                         this.vpage = 1;
                         this.expanded = {};
                         this.load();
+                    },
+                    // Dashboard counts for the collect landing. Best-effort:
+                    // a failed fetch just leaves the boxes hidden.
+                    async loadMetrics() {
+                        try {
+                            const r = await fetch("/metrics");
+                            if (r.ok) this.metrics = await r.json();
+                        } catch (e) {
+                            /* metrics are non-critical */
+                        }
                     },
                     setFilter(f) {
                         if (this.groupFilter === f) return;
@@ -237,6 +333,9 @@
                             }
                             this.result = await r.json();
                             this.vmeta = this.result.Vuln || this.vmeta;
+                            // A fresh collect may add a component/vulns/CPEs —
+                            // refresh the dashboard so the change is visible.
+                            if (this.mode === "collect") this.loadMetrics();
                         } catch (e) {
                             this.error = String(e);
                             this.result = null;
@@ -386,12 +485,12 @@
                     error: null,
                     init() {
                         this.sync();
-                        window.addEventListener("hashchange", () =>
+                        window.addEventListener("popstate", () =>
                             this.sync(),
                         );
                     },
                     sync() {
-                        const m = location.hash.match(/^#vuln\/(.+)$/);
+                        const m = route().match(/^vuln\/(.+)$/);
                         if (!m) return;
                         const id = decodeURIComponent(m[1]);
                         if (id !== this.id) {
@@ -434,7 +533,9 @@
                                     originalID: r.OriginalID,
                                     canonicalID: r.CanonicalID,
                                     score: r.Score,
-                                    ecosystem: ecoOf(r.AffectedPackage),
+                                    ecosystem: ecoOf(
+                                        r.AffectedPackage || r.MatchedOn,
+                                    ),
                                     title: recTitle(r),
                                     published: r.Published,
                                     updated: r.Modified,
@@ -445,7 +546,7 @@
                                 order.push(c);
                             }
                             c.packages.push({
-                                purl: r.AffectedPackage || "",
+                                purl: r.AffectedPackage || r.MatchedOn || "",
                                 open: c.packages.length === 0,
                                 showAll: false,
                                 affected: r.AffectedVersions || [],
@@ -462,6 +563,8 @@
             function vulns() {
                 return {
                     id: "",
+                    source: "",
+                    order: "",
                     page: 1,
                     limit: 24,
                     records: [],
@@ -474,6 +577,11 @@
                     },
                     get pages() {
                         return Math.max(1, Math.ceil(this.total / this.limit));
+                    },
+                    // Sort/filter change: back to page 1, reload immediately.
+                    onChange() {
+                        this.page = 1;
+                        this.load();
                     },
                     onInput() {
                         clearTimeout(this._t);
@@ -502,6 +610,8 @@
                                 "/vulnerabilities?" +
                                     new URLSearchParams({
                                         id: this.id,
+                                        source: this.source,
+                                        order: this.order,
                                         page: this.page,
                                         limit: this.limit,
                                     }),
@@ -604,7 +714,7 @@
             }
         </script>
     </head>
-    <body x-data="router()" @hashchange.window="sync()">
+    <body x-data="router()" @popstate.window="sync()">
         <nav class="nav">
             <div class="nav-left">
                 <span class="nav-brand">
@@ -618,32 +728,46 @@
                     <a
                         class="nav-link"
                         :class="{active: view==='collect'}"
-                        href="#collect"
+                        href="/app/collect"
                         @click.prevent="go('collect')"
                         >Collect</a
                     >
                     <a
                         class="nav-link"
                         :class="{active: view==='components'}"
-                        href="#components"
+                        href="/app/components"
                         @click.prevent="go('components')"
                         >Components</a
                     >
                     <a
                         class="nav-link"
                         :class="{active: view==='vulns'}"
-                        href="#vulns"
+                        href="/app/vulns"
                         @click.prevent="go('vulns')"
                         >Vulnerabilities</a
                     >
                     <a
                         class="nav-link"
                         :class="{active: view==='cpes'}"
-                        href="#cpes"
+                        href="/app/cpes"
                         @click.prevent="go('cpes')"
                         >CPEs</a
                     >
                 </div>
+            </div>
+            <div class="nav-right">
+                <template
+                    x-for="src in ['ecosyste.ms','osv','nvd','vulncheck']"
+                    :key="src"
+                >
+                    <span class="src" :data-tip="srcTip(src)">
+                        <span
+                            class="src-dot"
+                            :class="'src-'+srcStatus(src)"
+                        ></span>
+                        <span class="src-name" x-text="srcLabel(src)"></span>
+                    </span>
+                </template>
             </div>
         </nav>
 
@@ -656,7 +780,62 @@
             <main class="container bundle-main" x-data="bundleView(bv)">
                 <template x-if="mode==='collect'">
                     <section class="section">
-                        <h1 class="hero">Magpie — SCA scavenger</h1>
+                        <div class="metrics" x-show="metrics" x-cloak>
+                            <h2 class="metrics-title">The magpie's hoard</h2>
+                            <div class="metrics-grid">
+                                <div
+                                    class="metric"
+                                    data-tip="Packages Magpie has gathered metadata for."
+                                >
+                                    <div
+                                        class="metric-num"
+                                        x-text="metrics ? metrics.components : 0"
+                                    ></div>
+                                    <div class="metric-label">Components</div>
+                                </div>
+                                <div
+                                    class="metric"
+                                    data-tip="Security advisories collected across ecosyste.ms, OSV and NVD."
+                                >
+                                    <div
+                                        class="metric-num"
+                                        x-text="metrics ? metrics.vulnerabilities : 0"
+                                    ></div>
+                                    <div class="metric-label">Vulnerabilities</div>
+                                </div>
+                                <div
+                                    class="metric"
+                                    data-tip="NVD platform identifiers (CPEs) resolved for those packages."
+                                >
+                                    <div
+                                        class="metric-num"
+                                        x-text="metrics ? metrics.cpes : 0"
+                                    ></div>
+                                    <div class="metric-label">CPEs</div>
+                                </div>
+                                <div
+                                    class="metric"
+                                    data-tip="Of packages where an NVD CPE was searched, the share Magpie managed to resolve. Higher is better."
+                                >
+                                    <div
+                                        class="metric-num"
+                                        x-text="(metrics ? metrics.cpeCollectRate : 0) + '%'"
+                                    ></div>
+                                    <div class="metric-label">CPE collect</div>
+                                </div>
+                                <div
+                                    class="metric"
+                                    data-tip="Packages refreshed within the last 24h. Higher is better."
+                                >
+                                    <div
+                                        class="metric-num"
+                                        x-text="(metrics ? metrics.freshRate : 0) + '%'"
+                                    ></div>
+                                    <div class="metric-label">Fresh</div>
+                                </div>
+                            </div>
+                        </div>
+
                         <p class="hero-sub">
                             Paste a purl or spurl to scavenge metadata, repo,
                             and vulnerabilities.
@@ -694,7 +873,7 @@
                             </div>
                             <a
                                 class="nav-link"
-                                href="#components"
+                                href="/app/components"
                                 @click.prevent="go('components')"
                                 >‹ back</a
                             >
@@ -1108,7 +1287,7 @@
                                 >
                                     <span
                                         class="vc-canonical vc-open"
-                                        @click.stop="location.hash='vuln/'+encodeURIComponent(g.CanonicalID)"
+                                        @click.stop="nav('vuln/'+encodeURIComponent(g.CanonicalID))"
                                         title="Open vulnerability"
                                     >
                                         <span x-text="g.CanonicalID"></span>
@@ -1335,6 +1514,34 @@
                                                         </svg>
                                                         OSV
                                                     </a>
+                                                    <a
+                                                        class="svc-link"
+                                                        x-show="m.Record.Source==='nvd' && nvdURL(m.Record)"
+                                                        :href="nvdURL(m.Record)"
+                                                        target="_blank"
+                                                        rel="noopener"
+                                                    >
+                                                        <svg
+                                                            viewBox="0 0 24 24"
+                                                            fill="none"
+                                                            stroke="currentColor"
+                                                            stroke-width="2"
+                                                            stroke-linecap="round"
+                                                            stroke-linejoin="round"
+                                                            aria-hidden="true"
+                                                        >
+                                                            <path
+                                                                d="M15 3h6v6"
+                                                            />
+                                                            <path
+                                                                d="M10 14 21 3"
+                                                            />
+                                                            <path
+                                                                d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+                                                            />
+                                                        </svg>
+                                                        NVD
+                                                    </a>
                                                 </div>
                                             </div>
                                         </div>
@@ -1363,6 +1570,26 @@
                             @input="onInput()"
                             placeholder="GHSA / CVE / PYSEC…"
                         />
+                        <select
+                            class="select-pill"
+                            x-model="source"
+                            @change="onChange()"
+                        >
+                            <option value="">All sources</option>
+                            <option value="ecosyste.ms">ecosyste.ms</option>
+                            <option value="osv">OSV</option>
+                            <option value="nvd">NVD</option>
+                        </select>
+                        <select
+                            class="select-pill"
+                            x-model="order"
+                            @change="onChange()"
+                        >
+                            <option value="">Recent</option>
+                            <option value="cvss">CVSS</option>
+                            <option value="updated">Updated</option>
+                            <option value="created">Created</option>
+                        </select>
                     </div>
                     <div class="pager" x-show="!error && total > 0">
                         <span
@@ -1406,7 +1633,7 @@
                         <template x-for="(v, i) in records" :key="i">
                             <div
                                 class="svc svc-clickable"
-                                @click="location.hash='vuln/'+encodeURIComponent(v.CanonicalID||v.OriginalID)"
+                                @click="nav('vuln/'+encodeURIComponent(v.CanonicalID||v.OriginalID))"
                             >
                                 <div class="svc-top">
                                     <div class="svc-title-wrap">
@@ -1491,6 +1718,31 @@
                                             />
                                         </svg>
                                         OSV
+                                    </a>
+                                    <a
+                                        class="svc-link"
+                                        x-show="v.Source==='nvd' && nvdURL(v)"
+                                        :href="nvdURL(v)"
+                                        @click.stop
+                                        target="_blank"
+                                        rel="noopener"
+                                    >
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="M15 3h6v6" />
+                                            <path d="M10 14 21 3" />
+                                            <path
+                                                d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+                                            />
+                                        </svg>
+                                        NVD
                                     </a>
                                 </div>
 
@@ -1599,7 +1851,7 @@
                         <template x-for="(c, i) in records" :key="c.SPURL">
                             <div
                                 class="cmp cmp-clickable"
-                                @click="location.hash='component/'+encodeURIComponent(c.SPURL)"
+                                @click="nav('component/'+encodeURIComponent(c.SPURL))"
                             >
                                 <div class="cmp-row">
                                     <span class="cmp-icon">
@@ -1684,7 +1936,7 @@
                     </div>
                     <a
                         class="nav-link"
-                        href="#vulns"
+                        href="/app/vulns"
                         @click.prevent="go('vulns')"
                         >‹ back</a
                     >
@@ -1789,6 +2041,30 @@
                                 </svg>
                                 OSV
                             </a>
+                            <a
+                                class="evc-link"
+                                x-show="c.source==='nvd' && nvdURL(c.record)"
+                                :href="nvdURL(c.record)"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    aria-hidden="true"
+                                >
+                                    <path d="M15 3h6v6" />
+                                    <path d="M10 14 21 3" />
+                                    <path
+                                        d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+                                    />
+                                </svg>
+                                NVD
+                            </a>
                         </div>
 
                         <p
@@ -1850,7 +2126,7 @@
                                             <span
                                                 class="evc-purl vc-open"
                                                 x-show="pkg.purl"
-                                                @click.stop="location.hash='component/'+encodeURIComponent(pkg.purl)"
+                                                @click.stop="nav('component/'+encodeURIComponent(pkg.purl))"
                                                 title="Open component"
                                             >
                                                 <span x-text="pkg.purl"></span>
@@ -2136,9 +2412,12 @@
                                             <dd>
                                                 <div
                                                     class="cpe-ranges-stack"
-                                                    x-show="(c.NVDRanges||[]).length"
+                                                    x-show="(c.NVDRanges||[]).length || (c.OSVRanges||[]).length"
                                                 >
-                                                    <span class="cpe-ranges">
+                                                    <span
+                                                        class="cpe-ranges"
+                                                        x-show="(c.NVDRanges||[]).length"
+                                                    >
                                                         <span class="cpe-rlabel"
                                                             >nvd</span
                                                         >
@@ -2154,7 +2433,7 @@
                                                     </span>
                                                     <span
                                                         class="cpe-ranges"
-                                                        x-show="!matched(c, 'range') && (c.OSVRanges||[]).length"
+                                                        x-show="(c.OSVRanges||[]).length"
                                                     >
                                                         <span class="cpe-rlabel"
                                                             >osv</span
@@ -2172,7 +2451,7 @@
                                                 </div>
                                                 <span
                                                     class="cpe-val"
-                                                    x-show="!(c.NVDRanges||[]).length"
+                                                    x-show="!(c.NVDRanges||[]).length && !(c.OSVRanges||[]).length"
                                                     >—</span
                                                 >
                                             </dd>
@@ -2189,15 +2468,15 @@
                                     <span
                                         class="cpe-purl"
                                         x-show="c.SPURL"
-                                        @click="location.hash='component/'+encodeURIComponent(c.SPURL)"
+                                        @click="nav('component/'+encodeURIComponent(c.SPURL))"
                                         title="Open component"
                                         x-text="c.SPURL"
                                     ></span>
                                     <a
                                         class="cpe-cve evc-link"
                                         x-show="c.CVE"
-                                        href="#"
-                                        @click.prevent="location.hash='vuln/'+encodeURIComponent(c.CVE)"
+                                        :href="'/app/vuln/'+encodeURIComponent(c.CVE)"
+                                        @click.prevent="nav('vuln/'+encodeURIComponent(c.CVE))"
                                         title="Open vulnerability"
                                     >
                                         <span x-text="c.CVE"></span>

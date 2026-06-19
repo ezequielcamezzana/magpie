@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>magpie — package vulnerability intelligence</title>
+        <meta
+            name="description"
+            content="Paste a package coordinate and magpie pulls its metadata and known vulnerabilities from ecosyste.ms, OSV and NVD, resolves its CPE via VulnCheck, and gives you one consolidated view — no account."
+        />
+        <link rel="icon" href="/app/static/favicon.ico" />
+        <style>
+            *,
+            *::before,
+            *::after {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+            button,
+            input {
+                font-family: inherit;
+            }
+            :focus-visible {
+                outline: 2px solid var(--charcoal);
+                outline-offset: 1px;
+            }
+
+            /* Design system tokens ("Ollama, smaller"), inlined so the page is
+               self-contained. Values mirror static/ui/tokens.css. */
+            :root {
+                --primary: #000000;
+                --on-primary: #ffffff;
+                --ink: #000000;
+                --charcoal: #525252;
+                --body: #737373;
+                --mute: #a3a3a3;
+                --canvas: #ffffff;
+                --surface-soft: #fafafa;
+                --hairline: #e5e5e5;
+                --hairline-strong: #d4d4d4;
+
+                --status-clean: #27c93f;
+                --status-medium: #eab308;
+                --status-stale: #a3a3a3;
+
+                --radius-full: 9999px;
+                --radius-lg: 12px;
+                --radius-sm: 6px;
+            }
+
+            body {
+                font-family:
+                    ui-sans-serif,
+                    system-ui,
+                    -apple-system,
+                    sans-serif;
+                font-size: 16px;
+                line-height: 1.5;
+                color: var(--ink);
+                background: var(--canvas);
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+            }
+
+            /* Nav — identity + the single App action, no in-page routing. */
+            nav {
+                height: 56px;
+                position: sticky;
+                top: 0;
+                z-index: 50;
+                background: var(--canvas);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 32px;
+            }
+            nav .brand {
+                font-family: "SF Pro Rounded", system-ui, sans-serif;
+                font-size: 16px;
+                font-weight: 600;
+                color: var(--ink);
+                text-decoration: none;
+                display: inline-flex;
+                align-items: center;
+            }
+            nav .brand img {
+                height: 45px;
+                width: 45px;
+                object-fit: contain;
+                margin-right: 6px;
+            }
+
+            /* Buttons */
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 6px 16px;
+                height: 32px;
+                border-radius: var(--radius-full);
+                font-size: 13px;
+                font-weight: 500;
+                line-height: 1;
+                cursor: pointer;
+                border: 1px solid var(--hairline-strong);
+                background: var(--canvas);
+                color: var(--ink);
+                text-decoration: none;
+            }
+            .btn:hover {
+                border-color: var(--ink);
+            }
+            .btn-primary {
+                background: var(--primary);
+                color: var(--on-primary);
+                border-color: var(--primary);
+            }
+            .btn-primary:hover {
+                background: #090909;
+                border-color: #090909;
+            }
+            .btn-lg {
+                height: 38px;
+                padding: 0 20px;
+                font-size: 14px;
+            }
+
+            /* Layout — single narrow reading column. */
+            main {
+                width: 100%;
+                max-width: 860px;
+                margin: 0 auto;
+                padding: 72px 32px 96px;
+                flex: 1 0 auto;
+            }
+            section + section {
+                margin-top: 64px;
+            }
+            h1 {
+                font-family: "SF Pro Rounded", system-ui, sans-serif;
+                font-size: 40px;
+                font-weight: 600;
+                line-height: 1.15;
+                letter-spacing: -0.01em;
+                color: var(--ink);
+            }
+            h2 {
+                font-family: "SF Pro Rounded", system-ui, sans-serif;
+                font-size: 22px;
+                font-weight: 600;
+                color: var(--ink);
+                margin-bottom: 16px;
+            }
+            h3 {
+                font-family: "SF Pro Rounded", system-ui, sans-serif;
+                font-size: 16px;
+                font-weight: 600;
+                color: var(--ink);
+            }
+            p {
+                color: var(--body);
+            }
+            a.link {
+                color: var(--ink);
+                text-decoration: underline;
+                text-underline-offset: 3px;
+            }
+            code {
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 0.9em;
+                background: var(--surface-soft);
+                border: 1px solid var(--hairline);
+                border-radius: var(--radius-sm);
+                padding: 1px 5px;
+                color: var(--ink);
+            }
+
+            /* Hero */
+            .hero-tag {
+                font-style: italic;
+                font-size: 14px;
+                color: var(--mute);
+                margin-bottom: 16px;
+            }
+            .hero-lede {
+                font-size: 18px;
+                line-height: 1.55;
+                color: var(--body);
+                margin-top: 20px;
+                max-width: 640px;
+            }
+            .hero-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                margin-top: 32px;
+            }
+
+            /* Status pill */
+            .pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 3px 11px;
+                border-radius: var(--radius-full);
+                font-size: 12px;
+                font-weight: 500;
+                border: 1px solid var(--hairline);
+                color: var(--charcoal);
+                background: var(--surface-soft);
+            }
+            .pill .dot {
+                width: 6px;
+                height: 6px;
+                border-radius: var(--radius-full);
+                background: var(--status-medium);
+            }
+
+            /* Cards */
+            .card {
+                background: var(--canvas);
+                border: 1px solid var(--hairline);
+                border-radius: var(--radius-lg);
+                padding: 20px;
+            }
+            .card p {
+                font-size: 14px;
+                margin-top: 8px;
+            }
+            .grid-3 {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 14px;
+            }
+            .card-head {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .card-kicker {
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 11px;
+                color: var(--mute);
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+            }
+
+            /* Flow — numbered steps */
+            .flow {
+                list-style: none;
+                counter-reset: step;
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+                margin-top: 4px;
+            }
+            .flow li {
+                counter-increment: step;
+                display: flex;
+                gap: 14px;
+                padding: 12px 0;
+                border-bottom: 1px solid var(--hairline);
+                font-size: 14px;
+                color: var(--charcoal);
+            }
+            .flow li:last-child {
+                border-bottom: none;
+            }
+            .flow li::before {
+                content: counter(step, decimal-leading-zero);
+                flex-shrink: 0;
+                width: 26px;
+                height: 26px;
+                border-radius: var(--radius-full);
+                border: 1px solid var(--hairline-strong);
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 11px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                color: var(--charcoal);
+            }
+            .flow b {
+                color: var(--ink);
+                font-weight: 600;
+            }
+
+            /* Status columns */
+            .status-cols {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 14px;
+            }
+            .status-list {
+                list-style: none;
+                display: flex;
+                flex-direction: column;
+                gap: 9px;
+                margin-top: 12px;
+                font-size: 14px;
+                color: var(--charcoal);
+            }
+            .status-list li {
+                display: flex;
+                gap: 9px;
+                align-items: baseline;
+            }
+            .status-list .mk {
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 12px;
+                color: var(--mute);
+                flex-shrink: 0;
+            }
+
+            /* Try-it block */
+            .demo {
+                border: 1px solid var(--hairline-strong);
+                border-radius: var(--radius-lg);
+                padding: 24px;
+            }
+            .demo-coord {
+                display: block;
+                margin-top: 14px;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 13px;
+                color: var(--ink);
+                background: var(--surface-soft);
+                border: 1px solid var(--hairline);
+                border-radius: var(--radius-full);
+                padding: 10px 16px;
+                overflow-x: auto;
+                white-space: nowrap;
+                user-select: all;
+            }
+            .demo-actions {
+                display: flex;
+                gap: 8px;
+                margin-top: 14px;
+                flex-wrap: wrap;
+            }
+            .demo-note {
+                font-size: 12px;
+                color: var(--mute);
+                margin-top: 12px;
+            }
+
+            /* Footer */
+            .footer {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                padding: 20px 32px;
+                font-size: 13px;
+                color: var(--body);
+            }
+            .footer-meta {
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 12px;
+                color: var(--mute);
+            }
+            .footer-links {
+                display: inline-flex;
+                align-items: center;
+                gap: 16px;
+            }
+            .icon-link {
+                color: var(--mute);
+                display: inline-flex;
+                align-items: center;
+                background: none;
+                border: none;
+                padding: 0;
+                cursor: pointer;
+            }
+            .icon-link:hover {
+                color: var(--ink);
+            }
+            .icon-link svg {
+                width: 20px;
+                height: 20px;
+                display: block;
+            }
+
+            /* Install popover */
+            .install-wrap {
+                position: relative;
+                display: inline-flex;
+            }
+            .install-pop {
+                position: absolute;
+                bottom: calc(100% + 10px);
+                right: 0;
+                width: min(360px, 80vw);
+                background: var(--canvas);
+                border: 1px solid var(--hairline-strong);
+                border-radius: var(--radius-lg);
+                padding: 14px;
+                text-align: left;
+                z-index: 50;
+            }
+            .install-pop[hidden] {
+                display: none;
+            }
+            .install-pop-label {
+                font-size: 12px;
+                color: var(--mute);
+                margin-bottom: 8px;
+            }
+            .install-cmd {
+                display: block;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 12px;
+                color: var(--ink);
+                background: var(--surface-soft);
+                border: 1px solid var(--hairline);
+                border-radius: var(--radius-sm);
+                padding: 8px 10px;
+                overflow-x: auto;
+                white-space: nowrap;
+                user-select: all;
+            }
+            .install-pop-actions {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                margin-top: 10px;
+            }
+            .install-pop-link {
+                font-size: 12px;
+                color: var(--body);
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            .install-pop-link:hover {
+                color: var(--ink);
+                text-decoration: underline;
+            }
+
+            @media (max-width: 640px) {
+                main {
+                    padding: 48px 20px 72px;
+                }
+                nav,
+                .footer {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                }
+                h1 {
+                    font-size: 32px;
+                }
+                .grid-3,
+                .status-cols {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <nav>
+            <a class="brand" href="/">
+                <img src="/app/static/icon-512.png" alt="" />magpie
+            </a>
+            <a class="btn btn-primary" href="/app">App</a>
+        </nav>
+
+        <main>
+            <!-- Hero -->
+            <section>
+                <p class="hero-tag">the magpie hoards what matters</p>
+                <h1>Vulnerability intelligence for&nbsp;any&nbsp;package.</h1>
+                <p class="hero-lede">
+                    Paste a package coordinate and magpie pulls its metadata and
+                    known vulnerabilities from ecosyste.ms, OSV and NVD,
+                    resolves its <em>CPE</em> via VulnCheck, and gives you one
+                    consolidated view per <code>purl</code> — no account.
+                </p>
+                <div class="hero-actions">
+                    <a class="btn btn-primary btn-lg" href="/app"
+                        >Open the app</a
+                    >
+                    <a
+                        class="btn btn-lg"
+                        href="https://github.com/ezequielcamezzana/magpie"
+                        target="_blank"
+                        rel="noopener"
+                        >GitHub</a
+                    >
+                </div>
+            </section>
+
+            <!-- What it is -->
+            <section>
+                <h2>What it is</h2>
+                <p>
+                    A single Go binary serves a dashboard and JSON API. Hand it
+                    a package coordinate — <code>pkg:npm/axios@1.6.0</code> —
+                    and it gathers everything known about that package across
+                    three sources, cross-references them to resolve the
+                    package's
+                    <a
+                        class="link"
+                        href="https://nvd.nist.gov"
+                        target="_blank"
+                        rel="noopener"
+                        >CPE</a
+                    >, and caches the result in SQLite. Repeat lookups are
+                    instant.
+                </p>
+                <p style="margin-top: 12px">
+                    Named after the bird that hoards shiny things: magpie
+                    collects every scrap of security signal about a package into
+                    one hoard, so you don't have to stitch three databases
+                    together by hand.
+                </p>
+            </section>
+
+            <!-- Sources -->
+            <section>
+                <h2>What it pulls from</h2>
+                <div class="grid-3">
+                    <div class="card">
+                        <div class="card-head">
+                            <span class="card-kicker">metadata</span>
+                            <h3>ecosyste.ms</h3>
+                        </div>
+                        <p>
+                            Package and repository metadata plus inline
+                            advisories for the coordinate.
+                        </p>
+                    </div>
+                    <div class="card">
+                        <div class="card-head">
+                            <span class="card-kicker">vulns</span>
+                            <h3>OSV</h3>
+                        </div>
+                        <p>
+                            Known vulnerabilities by ecosystem — languages,
+                            GitHub repos and Linux distros.
+                        </p>
+                    </div>
+                    <div class="card">
+                        <div class="card-head">
+                            <span class="card-kicker">vulns</span>
+                            <h3>NVD</h3>
+                        </div>
+                        <p>
+                            Vulnerability records matched by CPE — the same role
+                            as OSV, keyed on the resolved <code>cpe:2.3</code>.
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- How it works -->
+            <section>
+                <h2>How it works</h2>
+                <ol class="flow">
+                    <li>
+                        <span
+                            ><b>Metadata.</b> ecosyste.ms returns the package's
+                            repository, licenses and inline advisories.</span
+                        >
+                    </li>
+                    <li>
+                        <span
+                            ><b>Vulnerabilities.</b> OSV is queried per purl and
+                            grouped by canonical CVE.</span
+                        >
+                    </li>
+                    <li>
+                        <span
+                            ><b>CPE resolution.</b> magpie cross-checks the CVEs
+                            against NVD's CPE configurations — fetched by CVE
+                            through VulnCheck's NVD2 index — matching on name,
+                            vendor, ecosystem and version range to pin the
+                            package's <code>cpe:2.3</code> identifier.</span
+                        >
+                    </li>
+                    <li>
+                        <span
+                            ><b>NVD records.</b> With the CPE resolved, it pulls
+                            NVD's vuln records for it and joins them into the
+                            bundle.</span
+                        >
+                    </li>
+                    <li>
+                        <span
+                            ><b>Cache &amp; refresh.</b> Everything lands in
+                            SQLite with per-source freshness windows; a
+                            background updater quietly refreshes stale
+                            packages.</span
+                        >
+                    </li>
+                </ol>
+            </section>
+
+            <!-- Development status -->
+            <section>
+                <div
+                    style="
+                        display: flex;
+                        align-items: center;
+                        gap: 12px;
+                        margin-bottom: 16px;
+                    "
+                >
+                    <h2 style="margin-bottom: 0">Development status</h2>
+                    <span class="pill"><span class="dot"></span>alpha</span>
+                </div>
+                <p style="font-size: 14px">
+                    magpie is alpha and built for research. It's useful today,
+                    but the scope is narrow and the data model still moves. It
+                    runs single-tenant and unauthenticated for now — a single
+                    binary over an embedded SQLite store.
+                </p>
+                <div class="status-cols" style="margin-top: 20px">
+                    <div>
+                        <h3>Today</h3>
+                        <ul class="status-list">
+                            <li>
+                                <span class="mk">+</span> Collect by purl across
+                                ecosyste.ms, OSV &amp; NVD
+                            </li>
+                            <li>
+                                <span class="mk">+</span> CPE resolution via
+                                VulnCheck (name / vendor / ecosystem / range)
+                            </li>
+                            <li>
+                                <span class="mk">+</span> Browse components,
+                                vulnerabilities &amp; CPEs
+                            </li>
+                            <li>
+                                <span class="mk">+</span> Live per-source
+                                health, background updater
+                            </li>
+                            <li>
+                                <span class="mk">+</span> Dashboard + JSON API,
+                                macOS &amp; Linux
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3>On the way</h3>
+                        <ul class="status-list">
+                            <li>
+                                <span class="mk">~</span> Pagination for NVD /
+                                OSV results
+                            </li>
+                            <li>
+                                <span class="mk">~</span> Severity normalization
+                                across sources
+                            </li>
+                            <li><span class="mk">~</span> More ecosystems</li>
+                            <li>
+                                <span class="mk">~</span> Persistence beyond
+                                local SQLite
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Try it -->
+            <section id="try">
+                <h2>Try it</h2>
+                <div class="demo">
+                    <p style="font-size: 14px">
+                        No account, no setup. Open the app and paste a
+                        coordinate — magpie does the rest:
+                    </p>
+                    <code class="demo-coord" id="demo-coord"
+                        >pkg:npm/axios@1.6.0</code
+                    >
+                    <div class="demo-actions">
+                        <button
+                            class="btn"
+                            type="button"
+                            onclick="copyCoord(this)"
+                        >
+                            Copy
+                        </button>
+                        <a
+                            class="btn btn-primary"
+                            href="/app/collect?purl=pkg:npm/axios@1.6.0"
+                            >Collect it →</a
+                        >
+                    </div>
+                    <p class="demo-note">
+                        Tip: any link like
+                        <code>/app/collect?purl=…</code> opens the app and runs
+                        that collect — shareable out of the box.
+                    </p>
+                </div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <span class="footer-meta" id="footer-meta"
+                >magpie · __MAGPIE_VERSION__</span
+            >
+            <span class="footer-links">
+                <a
+                    class="icon-link"
+                    href="https://github.com/ezequielcamezzana/magpie"
+                    target="_blank"
+                    rel="noopener"
+                    title="GitHub"
+                    aria-label="GitHub"
+                >
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        aria-hidden="true"
+                    >
+                        <path
+                            d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
+                        />
+                    </svg>
+                </a>
+                <a
+                    class="icon-link"
+                    href="https://github.com/ezequielcamezzana/magpie/tree/main/docs"
+                    target="_blank"
+                    rel="noopener"
+                    title="Docs"
+                    aria-label="Docs"
+                >
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path
+                            d="M2 4h7a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H2z"
+                        />
+                        <path
+                            d="M22 4h-7a3 3 0 0 0-3 3v13a2.5 2.5 0 0 1 2.5-2.5H22z"
+                        />
+                    </svg>
+                </a>
+                <span class="install-wrap">
+                    <button
+                        class="icon-link"
+                        type="button"
+                        title="Install"
+                        aria-label="Install"
+                        onclick="toggleInstall(event)"
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path
+                                d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                            />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                    </button>
+                    <div class="install-pop" hidden>
+                        <div class="install-pop-label">Install — Go 1.21+</div>
+                        <code class="install-cmd"
+                            >go install
+                            github.com/ezequielcamezzana/magpie/cmd/magpie@latest</code
+                        >
+                        <div class="install-pop-actions">
+                            <button
+                                class="btn"
+                                type="button"
+                                onclick="copyInstall(this)"
+                            >
+                                Copy
+                            </button>
+                            <a
+                                class="install-pop-link"
+                                href="https://github.com/ezequielcamezzana/magpie/releases"
+                                target="_blank"
+                                rel="noopener"
+                                >or download binaries →</a
+                            >
+                        </div>
+                    </div>
+                </span>
+            </span>
+        </footer>
+
+        <script>
+            // Append the year to the server-injected "magpie · <version>".
+            const meta = document.getElementById("footer-meta");
+            meta.textContent =
+                meta.textContent + " · " + new Date().getFullYear();
+
+            function copyText(text, btn) {
+                navigator.clipboard
+                    .writeText(text)
+                    .then(() => {
+                        const prev = btn.textContent;
+                        btn.textContent = "Copied";
+                        setTimeout(() => (btn.textContent = prev), 1500);
+                    })
+                    .catch(() => {}); // clipboard blocked → user can select it
+            }
+            function copyCoord(btn) {
+                copyText(
+                    document.getElementById("demo-coord").textContent.trim(),
+                    btn,
+                );
+            }
+            function copyInstall(btn) {
+                copyText(
+                    btn
+                        .closest(".install-pop")
+                        .querySelector(".install-cmd")
+                        .textContent.trim()
+                        .replace(/\s+/g, " "),
+                    btn,
+                );
+            }
+            function toggleInstall(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const pop =
+                    e.currentTarget.parentElement.querySelector(".install-pop");
+                pop.hidden = !pop.hidden;
+            }
+            document.addEventListener("click", (e) => {
+                if (!e.target.closest(".install-wrap")) {
+                    document
+                        .querySelectorAll(".install-pop")
+                        .forEach((p) => (p.hidden = true));
+                }
+            });
+        </script>
+    </body>
+</html>

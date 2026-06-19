@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
@@ -18,7 +19,9 @@ func handleCollect(deps Deps) http.HandlerFunc {
 			return
 		}
 
+		start := time.Now()
 		result, err := collect.Collect(r.Context(), coord, deps.Config)
+		deps.Logger.Info("collect", "coord", coord, "ms", time.Since(start).Milliseconds(), "ok", err == nil)
 		if err != nil {
 			// WHY: the coord is user input; a parse error is a bad request.
 			// TODO: distinguish 400 (invalid coord) from 500 (broken config).

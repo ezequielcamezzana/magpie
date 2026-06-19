@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -27,15 +26,14 @@ const (
 
 type Client struct {
 	httpc   *http.Client
-	logger  *slog.Logger
 	BaseURL string
 }
 
-func New(httpc *http.Client, logger *slog.Logger) *Client {
+func New(httpc *http.Client) *Client {
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}
-	return &Client{httpc: httpc, logger: logger, BaseURL: defaultBaseURL}
+	return &Client{httpc: httpc, BaseURL: defaultBaseURL}
 }
 
 // Query looks up vulnerabilities for an OSV query. The strategy depends on
@@ -161,6 +159,11 @@ func mapVuln(v *rawVuln, payload json.RawMessage, q purl.OSVQuery, queryKey stri
 
 	score := deriveScore(v.Severity)
 
+	summary := v.Summary
+	if summary == "" {
+		summary = v.Details
+	}
+
 	rec := collect.VulnRecord{
 		Source:     collect.SourceOSV,
 		QueryKey:   queryKey,
@@ -168,6 +171,7 @@ func mapVuln(v *rawVuln, payload json.RawMessage, q purl.OSVQuery, queryKey stri
 		Aliases:    mergeUnique(v.Aliases, v.Upstream),
 		// CanonicalID (CVE) derivation is Group's job; collect stamps it.
 		CanonicalID: "",
+		Summary:     summary,
 		Score:       score,
 		Severity:    deriveSeverity(v.DatabaseSpecific.Severity, score),
 		Published:   published,

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-//go:embed index.html static
+//go:embed index.html site.html static
 var assets embed.FS
 
 // Handler serves the SPA under the /app prefix: /app/static/* maps to the
@@ -32,4 +32,17 @@ func Handler(version string) http.Handler {
 		w.Write(index)
 	})
 	return mux
+}
+
+// Site serves the static marketing page at /: what magpie is, how it
+// works and its development status. It reuses the app's stylesheets and
+// assets under /app/static, so it has no routes of its own.
+func Site(version string) http.Handler {
+	page, _ := assets.ReadFile("site.html")
+	page = bytes.Replace(page, []byte("__MAGPIE_VERSION__"), []byte(version), 1)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(page)
+	})
 }

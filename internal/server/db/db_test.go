@@ -39,6 +39,49 @@ func TestOpenCreatesTables(t *testing.T) {
 	require.NoError(t, err, "idx_vulns_canonical not found")
 }
 
+func TestStaleComponents(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	put := func(spurl string, age time.Duration) {
+		require.NoError(t, s.PutComponent(ctx, collect.Component{SPURL: spurl, FetchedAt: now.Add(-age)}))
+	}
+	put("pkg:npm/fresh", 1*time.Hour)
+	put("pkg:npm/old", 13*time.Hour)
+	put("pkg:npm/oldest", 30*time.Hour)
+
+	cutoff := now.Add(-12 * time.Hour)
+
+	got, err := s.StaleComponents(ctx, cutoff, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pkg:npm/oldest", "pkg:npm/old"}, got, "oldest first, fresh excluded")
+
+	// Limit caps the result at the oldest.
+	got, err = s.StaleComponents(ctx, cutoff, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pkg:npm/oldest"}, got)
+}
+
+func TestMetrics(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	require.NoError(t, s.PutComponent(ctx, collect.Component{SPURL: "pkg:npm/fresh", FetchedAt: now.Add(-1 * time.Hour)}))
+	require.NoError(t, s.PutComponent(ctx, collect.Component{SPURL: "pkg:npm/stale", FetchedAt: now.Add(-30 * time.Hour)}))
+	require.NoError(t, s.PutCPEs(ctx, "pkg:npm/fresh", []collect.ResolvedCPE{{CPE: "cpe:2.3:a:foo:fresh"}}))
+	require.NoError(t, s.PutMissedCPE(ctx, "pkg:npm/stale"))
+
+	m, err := s.Metrics(ctx, now.Add(-24*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, 2, m.Components)
+	assert.Equal(t, 1, m.CPEs)
+	assert.Equal(t, 1, m.ComponentsWithCPE)
+	assert.Equal(t, 1, m.MissedCPEs)
+	assert.Equal(t, 1, m.StaleComponents, "the 30h-old component is stale")
+}
+
 func TestComponentRoundTrip(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
@@ -163,6 +206,7 @@ func vulnRecord(id, canonical string, fetchedAt time.Time) collect.VulnRecord {
 		OriginalID:         id,
 		Aliases:            []string{"CVE-2020-" + id, "GHSA-" + id},
 		CanonicalID:        canonical,
+		Summary:            "summary for " + id,
 		Score:              7.5,
 		Severity:           "HIGH",
 		AffectedVersions:   []string{"1.0.0", "1.1.0"},
@@ -202,9 +246,12 @@ func TestVulnsRoundTrip(t *testing.T) {
 		got, ok := byID[want.OriginalID]
 		require.True(t, ok, "missing record %q", want.OriginalID)
 		assert.Equal(t, want.CanonicalID, got.CanonicalID, want.OriginalID)
+		assert.Equal(t, want.Summary, got.Summary, want.OriginalID)
 		assert.Equal(t, want.Score, got.Score, want.OriginalID)
 		assert.Equal(t, want.Severity, got.Severity, want.OriginalID)
 		assert.Equal(t, want.AffectedPackage, got.AffectedPackage, want.OriginalID)
+		// matched_on falls back to the affected purl when unset (OSV/eco path).
+		assert.Equal(t, want.AffectedPackage, got.MatchedOn, want.OriginalID)
 		assert.Equal(t, want.Aliases, got.Aliases, want.OriginalID)
 		assert.Equal(t, want.AffectedRanges, got.AffectedRanges, want.OriginalID)
 		assert.Equal(t, string(want.Payload), string(got.Payload), want.OriginalID)
@@ -412,6 +459,95 @@ func TestQueryVulnsEmptyID(t *testing.T) {
 	require.NoError(t, err, "QueryVulns")
 	assert.Equal(t, 4, total)
 	assert.Len(t, recs, 4)
+}
+
+func TestQueryVulnsSourceFilterAndOrder(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mk := func(source, id string, score float64, publishedDay, modifiedDay int) collect.VulnRecord {
+		return collect.VulnRecord{
+			Source: source, QueryKey: source + ":k", OriginalID: id, CanonicalID: id,
+			Score:     score,
+			Published: base.AddDate(0, 0, publishedDay),
+			Modified:  base.AddDate(0, 0, modifiedDay),
+			FetchedAt: base,
+		}
+	}
+	require.NoError(t, s.PutVulns(ctx, "osv", "osv:k", []collect.VulnRecord{
+		mk("osv", "OSV-LOW", 3.1, 1, 2),
+	}), "seed osv")
+	require.NoError(t, s.PutVulns(ctx, "nvd", "nvd:k", []collect.VulnRecord{
+		mk("nvd", "NVD-HIGH", 9.8, 10, 20),
+		mk("nvd", "NVD-MED", 5.0, 5, 3),
+	}), "seed nvd")
+
+	// The list path is always collapsed; ordering applies there. (Distinct
+	// canonicals here, so collapse keeps all three rows.)
+	// Source filter: only nvd rows.
+	recs, total, err := s.QueryVulns(ctx, collect.VulnQuery{Source: "nvd", Collapse: true, Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	for _, r := range recs {
+		assert.Equal(t, "nvd", r.Source)
+	}
+
+	// Each sort key puts NVD-HIGH first (top CVSS, newest published, newest modified).
+	for _, order := range []string{"cvss", "created", "updated"} {
+		recs, _, err := s.QueryVulns(ctx, collect.VulnQuery{Order: order, Collapse: true, Page: 1, Limit: 25})
+		require.NoError(t, err, order)
+		require.Len(t, recs, 3, order)
+		assert.Equal(t, "NVD-HIGH", recs[0].OriginalID, "order=%s", order)
+	}
+
+	// CVSS order lowest is last.
+	recs, _, err = s.QueryVulns(ctx, collect.VulnQuery{Order: "cvss", Collapse: true, Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, "OSV-LOW", recs[2].OriginalID)
+
+	// Source + order combine.
+	recs, total, err = s.QueryVulns(ctx, collect.VulnQuery{Source: "nvd", Order: "cvss", Collapse: true, Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	assert.Equal(t, "NVD-HIGH", recs[0].OriginalID)
+}
+
+func TestQueryVulnsCollapseAndFuzzy(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mk := func(source, qk, matchedOn string, score float64) collect.VulnRecord {
+		return collect.VulnRecord{
+			Source: source, QueryKey: qk, OriginalID: "GHSA-2026-multi", CanonicalID: "CVE-2026-1234",
+			MatchedOn: matchedOn, AffectedPackage: matchedOn, Score: score, FetchedAt: base,
+		}
+	}
+	// The same logical vuln (canonical CVE-2026-1234) seen three ways: two
+	// packages under osv, and once more mirrored from ecosyste.ms.
+	require.NoError(t, s.PutVulns(ctx, "osv", "npm:a", []collect.VulnRecord{mk("osv", "npm:a", "pkg:npm/a", 7.0)}), "seed a")
+	require.NoError(t, s.PutVulns(ctx, "osv", "npm:b", []collect.VulnRecord{mk("osv", "npm:b", "pkg:npm/b", 7.0)}), "seed b")
+	require.NoError(t, s.PutVulns(ctx, "ecosyste.ms", "npm:a", []collect.VulnRecord{mk("ecosyste.ms", "npm:a", "pkg:npm/a", 9.1)}), "seed eco")
+
+	// Per-impact (detail): every row.
+	_, total, err := s.QueryVulns(ctx, collect.VulnQuery{Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 3, total, "non-collapsed shows each package/source")
+
+	// Collapsed (list): one row for the vuln, even across packages and sources.
+	recs, total, err := s.QueryVulns(ctx, collect.VulnQuery{Collapse: true, Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "collapsed shows the vuln once")
+	require.Len(t, recs, 1)
+	assert.Equal(t, 9.1, recs[0].Score, "representative row is the highest-severity instance")
+
+	// Fuzzy substring matches the canonical CVE; exact does not.
+	_, total, err = s.QueryVulns(ctx, collect.VulnQuery{ID: "CVE-2026", Fuzzy: true, Collapse: true, Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "fuzzy 'CVE-2026' matches CVE-2026-1234")
+
+	_, total, err = s.QueryVulns(ctx, collect.VulnQuery{ID: "CVE-2026", Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 0, total, "exact 'CVE-2026' matches nothing")
 }
 
 // TestOpenMigratesOldCPEsTable: a DB created before the

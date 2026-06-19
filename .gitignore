@@ -1,11 +1,33 @@
+# Compiled binary (built at repo root by deploy.sh / go build -o magpie)
 /magpie
-/cmd/magpie/magpie
 /bin/
-.DS_Store
-*.db
-*.db-journal
-*.test
-*.out
-coverage.txt
-.envrc
+*.exe
+
+# GoReleaser output
+/dist/
+
+# Secrets & local environment — NEVER commit
 .env
+.env.*
+!.env.example
+deploy.sh
+
+# Databases
+*.db
+*.db-wal
+*.db-shm
+
+# Local runtime data
+/logs/
+*.log
+/pending/
+/scripts
+
+# Local AI tooling
+.claude/
+.claude-flow/
+
+# OS / editor
+.DS_Store
+*.swp
+*~

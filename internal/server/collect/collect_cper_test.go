@@ -2,7 +2,6 @@ package collect
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
@@ -12,20 +11,42 @@ import (
 	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 )
 
-// fakeCPERStage adapts a simplified stage func to CPERStage. The real CPER
-// logic is tested in the cper package; here only Collect's contract: it
-// invokes the stage and assembles whatever it left in the store.
-func fakeCPERStage(f func(ctx context.Context, cfg Config, spurl string, records []VulnRecord, now time.Time)) CPERStage {
-	return func(ctx context.Context, _ *http.Client, cfg Config, _ purl.Identity, spurl, _ string, records []VulnRecord, now time.Time) {
-		f(ctx, cfg, spurl, records, now)
+func TestBestSummary(t *testing.T) {
+	// Priority nvd > osv > eco, and a source only contributes if non-empty.
+	recs := []VulnRecord{
+		{Source: SourceEcosystems, Summary: "eco text"},
+		{Source: SourceOSV, Summary: "osv text"},
+		{Source: SourceNVD, Summary: "nvd text"},
 	}
+	assert.Equal(t, "nvd text", bestSummary(recs))
+
+	// NVD present but empty → falls through to OSV.
+	recs = []VulnRecord{
+		{Source: SourceNVD, Summary: ""},
+		{Source: SourceOSV, Summary: "osv text"},
+		{Source: SourceEcosystems, Summary: "eco text"},
+	}
+	assert.Equal(t, "osv text", bestSummary(recs))
+
+	assert.Empty(t, bestSummary([]VulnRecord{{Source: SourceOSV}}))
 }
 
-// TestCollectAssemblesCPERStage: what stage 3 persists (CPEs + source=nvd
-// records) ends up assembled in the Result as the canonical's 3rd source.
-func TestCollectAssemblesCPERStage(t *testing.T) {
+// stubNVDFetcher answers QueryCPE from a map keyed by short CPE.
+type stubNVDFetcher struct {
+	byCPE map[string][]VulnRecord
+}
+
+func (s stubNVDFetcher) QueryCPE(_ context.Context, cpe string) ([]VulnRecord, error) {
+	return s.byCPE[ShortCPE(cpe)], nil
+}
+
+// TestCollectAssemblesStages: stage 3 (CPER, stubbed) resolves a CPE; stage 4
+// (real, via the stub NVD fetcher) turns it into the package's NVD record,
+// which ends up assembled as the canonical's extra source.
+func TestCollectAssemblesStages(t *testing.T) {
 	st := newFakeStore()
 	spurl := "pkg:npm/lodash"
+	cpe := "cpe:2.3:a:lodash:lodash"
 	cfg := testConfig(st,
 		&stubFetcher{
 			comp: Component{SPURL: spurl, Name: "lodash"},
@@ -36,31 +57,42 @@ func TestCollectAssemblesCPERStage(t *testing.T) {
 		},
 		stubOSV{})
 	cfg.NVDAPIKey = "test"
-	cfg.MaxAge = 24 * time.Hour
+	cfg.MaxAge = UniformMaxAge(24 * time.Hour)
 
-	cfg.CPER = fakeCPERStage(func(ctx context.Context, cfg Config, sp string, records []VulnRecord, now time.Time) {
-		assert.NotEmpty(t, records, "stage: want the assembled records")
-		_ = cfg.Store.PutCPEs(ctx, sp, []ResolvedCPE{{CPE: "cpe:2.3:a:lodash:lodash", CVE: "CVE-2021-23337"}})
-		_ = cfg.Store.PutVulns(ctx, SourceNVD, sp, []VulnRecord{{
-			Source: SourceNVD, QueryKey: sp, OriginalID: "CVE-2021-23337",
-			CanonicalID: "CVE-2021-23337", Score: 7.2, FetchedAt: now,
-		}})
-	})
+	// Stage 3 stub: just resolve the CPE (the real §3a logic is tested in cper).
+	cfg.CPER = func(ctx context.Context, cfg Config, _ purl.Identity, sp, _ string, records []VulnRecord, _ time.Time) {
+		assert.NotEmpty(t, records, "stage 3: want the assembled records")
+		_ = cfg.Store.PutCPEs(ctx, sp, []ResolvedCPE{{CPE: cpe, CVE: "CVE-2021-23337"}})
+	}
+
+	// Stage 4: NVD returns the CVE affecting that CPE (MatchedOn = the CPE; the
+	// component purl is filled by the pipeline).
+	cfg.NVDFetcher = stubNVDFetcher{byCPE: map[string][]VulnRecord{
+		cpe: {{
+			Source: SourceNVD, OriginalID: "CVE-2021-23337", CanonicalID: "CVE-2021-23337",
+			MatchedOn: cpe + ":*:*:*:*:*:node.js:*:*", Score: 7.2,
+			AffectedRanges: []string{"[*, 4.17.21)"},
+		}},
+	}}
 
 	res, err := Collect(context.Background(), "pkg:npm/lodash@4.17.20", cfg)
 	require.NoError(t, err)
 
 	require.Len(t, res.CPEs, 1)
-	assert.Equal(t, "cpe:2.3:a:lodash:lodash", res.CPEs[0].CPE)
+	assert.Equal(t, cpe, res.CPEs[0].CPE)
 
-	// The NVD record got assembled as a member of the CVE's group.
-	var nvdMembers int
-	for _, g := range res.Groups {
-		for _, m := range g.Members {
-			if m.Record.Source == SourceNVD {
-				nvdMembers++
+	// The NVD record (from stage 4) got assembled as a member of the CVE's
+	// group, with the component stamped as the package purl and the CPE kept in
+	// MatchedOn.
+	var nvd *VulnRecord
+	for gi := range res.Groups {
+		for mi := range res.Groups[gi].Members {
+			if res.Groups[gi].Members[mi].Record.Source == SourceNVD {
+				nvd = &res.Groups[gi].Members[mi].Record
 			}
 		}
 	}
-	assert.Equal(t, 1, nvdMembers, "want 1 nvd member in groups")
+	require.NotNil(t, nvd, "want 1 nvd member in groups")
+	assert.Equal(t, spurl, nvd.AffectedPackage, "component must be the package purl")
+	assert.Equal(t, cpe+":*:*:*:*:*:node.js:*:*", nvd.MatchedOn, "matched_on must be the CPE")
 }

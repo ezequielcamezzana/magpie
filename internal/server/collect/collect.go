@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"time"
 
@@ -29,9 +28,22 @@ type OSVFetcher interface {
 	Query(ctx context.Context, q purl.OSVQuery) ([]VulnRecord, error)
 }
 
+// NVDFetcher is the NVD seam; *nvd.Client satisfies it. QueryCPE returns one
+// record per CVE affecting a CPE (stage 4) as VulnRecords (NVD is just another
+// source). Injected via Config so it can be stubbed.
+type NVDFetcher interface {
+	QueryCPE(ctx context.Context, cpe string) ([]VulnRecord, error)
+}
+
+// CVEFetcher resolves a CVE by id into VulnRecords. *vulncheck.Client
+// satisfies it; CPER (stage 3) uses it to fetch the CVEs it cross-checks.
+type CVEFetcher interface {
+	FetchCVE(ctx context.Context, cveID string) ([]VulnRecord, error)
+}
+
 // CPERStage is stage 3 (CPE resolution); cper.Stage satisfies it. Optional:
-// nil in Config skips the stage.
-type CPERStage func(ctx context.Context, httpc *http.Client, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time)
+// nil in Config skips the stage. Uses cfg.NVDFetcher.
+type CPERStage func(ctx context.Context, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time)
 
 // Collect orchestrates the collection pipeline for one coordinate: stage 1
 // (ecosyste.ms), stage 2 (OSV), then assembly + matching + roll-up.
@@ -53,20 +65,15 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 		return nil, err
 	}
 
-	httpClient := cfg.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-
 	identity := purl.Decompose(p)
 	spurl := purl.Strip(p)
 	q := identity.OSVQuery()
 	osvKey := q.StoreKey()
 	now := time.Now().UTC()
 
-	res, errs := collectStage1(ctx, cfg.EcosystemsFetcher, cfg.Store, spurl, cfg.MaxAge, now)
+	res, errs := collectStage1(ctx, cfg.EcosystemsFetcher, cfg.Store, spurl, cfg.MaxAge.Components, now, cfg.SourceBudget)
 
-	errs = append(errs, runOSV(ctx, cfg.OSVFetcher, cfg.Store, q, osvKey, spurl, cfg.MaxAge, now)...)
+	errs = append(errs, runOSV(ctx, cfg.OSVFetcher, cfg.Store, q, osvKey, spurl, cfg.MaxAge.Vulns, now, cfg.SourceBudget)...)
 
 	// Assembly: reading from the store unifies cache-hit and fresh-fetch.
 	var allRecords []VulnRecord
@@ -79,22 +86,49 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 		}
 	}
 
-	// Stage 3: CPER — resolves CPE(s) from the CVEs in allRecords and persists
-	// the NVD CVEs as vuln records (source=nvd, key=spurl).
+	// Stage 3: CPER — resolves the package's CPE(s) by cross-checking the CVEs
+	// in allRecords against NVD's CPE configurations. Caches per-CVE; writes the
+	// resolved CPEs only.
 	repoURL := ""
 	if res.Component != nil {
 		repoURL = res.Component.RepoURL
 	}
 	if cfg.CPER != nil {
-		cfg.CPER(ctx, httpClient, cfg, identity, spurl, repoURL, allRecords, now)
-	}
-
-	// The NVD records CPER left behind join the bundle (3rd source of the canonical).
-	if r, _ := cfg.Store.GetVulns(ctx, SourceNVD, spurl); r.Found {
-		allRecords = append(allRecords, r.Value...)
+		cctx, cancel := budgetCtx(ctx, cfg.SourceBudget)
+		cfg.CPER(cctx, cfg, identity, spurl, repoURL, allRecords, now)
+		// Only our budget firing (not the request being cancelled) is a
+		// "timed out" we report; the eco/OSV data already collected still ships.
+		if ctx.Err() == nil && cctx.Err() == context.DeadlineExceeded {
+			errs = append(errs, SourceError{Source: SourceCPER, Kind: "timeout", Err: errors.New("CPER timed out")})
+		}
+		cancel()
 	}
 	if c, _ := cfg.Store.GetCPEs(ctx, spurl); c.Found {
 		res.CPEs = c.Value
+	}
+
+	// Stage 4: for each resolved CPE, query NVD by CPE for every CVE affecting
+	// it (cache-aware) and join those NVD records to the bundle. The CVE that
+	// resolved the CPE reappears here, so stage 4 alone covers the package's NVD
+	// vulns — CPER doesn't persist package records. Bounded so a slow/down NVD
+	// can't block the request: on timeout we report it and keep eco/OSV vulns.
+	nctx, cancel := budgetCtx(ctx, cfg.SourceBudget)
+	nvdErrs := runNVDByCPE(nctx, cfg, res.CPEs, spurl, cfg.MaxAge.Vulns, now)
+	if ctx.Err() == nil && nctx.Err() == context.DeadlineExceeded {
+		errs = append(errs, SourceError{Source: SourceNVD, Kind: "timeout", Err: errors.New("NVD vuln match timed out")})
+	} else {
+		errs = append(errs, nvdErrs...)
+	}
+	cancel()
+	for _, c := range res.CPEs {
+		if r, _ := cfg.Store.GetVulns(ctx, SourceNVD, NVDCPEKey(c.CPE)); r.Found {
+			// Re-stamp the component for THIS package (the per-CPE cache is
+			// shared across packages that resolve to the same CPE).
+			for i := range r.Value {
+				r.Value[i].AffectedPackage = spurl
+			}
+			allRecords = append(allRecords, r.Value...)
+		}
 	}
 
 	// If the pipeline produced no Component (ecosyste.ms doesn't cover this
@@ -162,12 +196,17 @@ func FromStore(ctx context.Context, coord string, st Store) (*Result, error) {
 			allRecords = append(allRecords, r.Value...)
 		}
 	}
-	// NVD records + already-resolved CPEs (store-only, no network).
-	if r, _ := st.GetVulns(ctx, SourceNVD, spurl); r.Found {
-		allRecords = append(allRecords, r.Value...)
-	}
+	// Already-resolved CPEs and their NVD records (store-only, no network).
 	if c, _ := st.GetCPEs(ctx, spurl); c.Found {
 		res.CPEs = c.Value
+	}
+	for _, c := range res.CPEs {
+		if r, _ := st.GetVulns(ctx, SourceNVD, NVDCPEKey(c.CPE)); r.Found {
+			for i := range r.Value {
+				r.Value[i].AffectedPackage = spurl
+			}
+			allRecords = append(allRecords, r.Value...)
+		}
 	}
 
 	res.Groups = matchGroups(Group(allRecords), identity, identity.Version)
@@ -188,18 +227,27 @@ func orderGroups(groups []VulnGroup) {
 
 // runOSV resolves stage 2 (cache-aware, same pattern as stage 1). Returns
 // non-fatal SourceErrors; never aborts the pipeline.
-func runOSV(ctx context.Context, fetcher OSVFetcher, st Store, q purl.OSVQuery, osvKey string, spurl string, maxAge time.Duration, now time.Time) []SourceError {
+func runOSV(ctx context.Context, fetcher OSVFetcher, st Store, q purl.OSVQuery, osvKey string, spurl string, maxAge time.Duration, now time.Time, budget time.Duration) []SourceError {
 	if osvKey == "" {
 		return nil
 	}
 
-	if cached, _ := st.GetVulns(ctx, SourceOSV, osvKey); cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
+	cached, _ := st.GetVulns(ctx, SourceOSV, osvKey)
+	if cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
 		return nil
 	}
 
-	records, err := fetcher.Query(ctx, q)
+	fctx, cancel := budgetCtx(ctx, budget)
+	records, err := fetcher.Query(fctx, q)
+	timedOut := ctx.Err() == nil && fctx.Err() == context.DeadlineExceeded
+	cancel()
 	if err != nil {
-		return []SourceError{{Source: SourceOSV, Kind: "other", Err: fmt.Errorf("osv query: %w", err)}}
+		// On failure/timeout the stale OSV vulns stay in the store and are
+		// picked up by the assembly step — warn but keep serving them.
+		if cached.Found {
+			return []SourceError{{Source: SourceOSV, Kind: errKind(timedOut), Err: errors.New("served cached data")}}
+		}
+		return []SourceError{{Source: SourceOSV, Kind: errKind(timedOut), Err: fmt.Errorf("osv query: %w", err)}}
 	}
 
 	// WHY: stamping the canonical per-record before persisting populates the
@@ -220,12 +268,88 @@ func runOSV(ctx context.Context, fetcher OSVFetcher, st Store, q purl.OSVQuery, 
 	return nil
 }
 
+// runNVDByCPE is stage 4: for each resolved CPE, query NVD for the CVEs
+// affecting it and persist them under the per-CPE key (which the assembly
+// reads). Cache-aware and best-effort — a failed query is skipped, never
+// aborts. Returns non-fatal SourceErrors.
+// budgetCtx bounds a source's live fetch so it can't consume the whole request.
+// budget <= 0 disables the bound. The caller must cancel().
+func budgetCtx(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	if budget <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, budget)
+}
+
+// errKind labels a SourceError: "timeout" when our budget fired, else "other".
+func errKind(timedOut bool) string {
+	if timedOut {
+		return "timeout"
+	}
+	return "other"
+}
+
+// cachedComponentResult builds a Result from a (possibly stale) cached component,
+// pulling its repository from the store too.
+func cachedComponentResult(ctx context.Context, st Store, comp Component) *Result {
+	var repo *Repository
+	if comp.RepoURL != "" {
+		if r, _ := st.GetRepository(ctx, comp.RepoURL); r.Found {
+			rv := r.Value
+			repo = &rv
+		}
+	}
+	return &Result{Component: &comp, Repository: repo}
+}
+
+func runNVDByCPE(ctx context.Context, cfg Config, cpes []ResolvedCPE, spurl string, maxAge time.Duration, now time.Time) []SourceError {
+	if cfg.NVDFetcher == nil {
+		return nil
+	}
+	var errs []SourceError
+	for _, c := range cpes {
+		key := NVDCPEKey(c.CPE)
+		if cached, _ := cfg.Store.GetVulns(ctx, SourceNVD, key); cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
+			continue // fresh: don't touch NVD
+		}
+		records, err := cfg.NVDFetcher.QueryCPE(ctx, c.CPE)
+		if err != nil {
+			errs = append(errs, SourceError{Source: SourceNVD, Kind: "other", Err: fmt.Errorf("nvd query cpe %q: %w", c.CPE, err)})
+			continue
+		}
+		for i := range records {
+			records[i].CanonicalID = records[i].OriginalID // NVD ids are CVEs
+			// The affected component is this package; MatchedOn already holds the
+			// CPE. (Best-effort in the shared per-CPE cache; assembly re-stamps.)
+			records[i].AffectedPackage = spurl
+			records[i].FetchedAt = now
+		}
+		_ = cfg.Store.PutVulns(ctx, SourceNVD, key, records)
+	}
+	return errs
+}
+
+// bestSummary picks the group's display summary by source priority: NVD
+// description first, then OSV summary, then ecosyste.ms. A source contributes
+// only if it actually has a non-empty summary.
+func bestSummary(records []VulnRecord) string {
+	for _, src := range []string{SourceNVD, SourceOSV, SourceEcosystems} {
+		for _, r := range records {
+			if r.Source == src && r.Summary != "" {
+				return r.Summary
+			}
+		}
+	}
+	return ""
+}
+
 // matchGroups runs per-record matching over each CanonicalGroup and does the
 // binary per-group roll-up.
 func matchGroups(groups []CanonicalGroup, identity purl.Identity, version string) []VulnGroup {
 	out := make([]VulnGroup, 0, len(groups))
 	for _, g := range groups {
 		vg := VulnGroup{CanonicalID: g.CanonicalID, MaxScore: g.MaxScore}
+		vg.Summary = bestSummary(g.Records)
 		for _, r := range g.Records {
 			// Created = oldest Published; Updated = newest Modified.
 			if !r.Published.IsZero() && (vg.Created.IsZero() || r.Published.Before(vg.Created)) {
@@ -265,31 +389,33 @@ func matchGroups(groups []CanonicalGroup, identity purl.Identity, version string
 
 // collectStage1 resolves Component/Repository/Vulns from ecosyste.ms, reading
 // from the store when the data is fresh and fetching+persisting when not.
-func collectStage1(ctx context.Context, fetcher EcosystemsFetcher, st Store, spurl string, maxAge time.Duration, now time.Time) (*Result, []SourceError) {
+func collectStage1(ctx context.Context, fetcher EcosystemsFetcher, st Store, spurl string, maxAge time.Duration, now time.Time, budget time.Duration) (*Result, []SourceError) {
 	var errs []SourceError
 
 	cached, _ := st.GetComponent(ctx, spurl)
 	if cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
-		comp := cached.Value
-		var repo *Repository
-		if comp.RepoURL != "" {
-			if r, _ := st.GetRepository(ctx, comp.RepoURL); r.Found {
-				rv := r.Value
-				repo = &rv
-			}
-		}
-		return &Result{Component: &comp, Repository: repo}, errs
+		return cachedComponentResult(ctx, st, cached.Value), errs
 	}
 
-	comp, repo, vulns, err := fetcher.Fetch(ctx, spurl)
+	fctx, cancel := budgetCtx(ctx, budget)
+	comp, repo, vulns, err := fetcher.Fetch(fctx, spurl)
+	timedOut := ctx.Err() == nil && fctx.Err() == context.DeadlineExceeded
+	cancel()
+
 	if errors.Is(err, ErrSourceNotApplicable) {
 		// ecosyste.ms doesn't cover this purl type (deb/rpm/apk/…): not an
 		// error, distro data arrives via OSV. Clean skip, no SourceError.
 		return &Result{}, errs
 	}
 	if err != nil {
-		// TODO: classify the error (Kind is still always "other").
-		errs = append(errs, SourceError{Source: SourceEcosystems, Kind: "other", Err: err})
+		// Live fetch failed or timed out. Serve the stale component if we have
+		// one (collect must stay fast), with a non-fatal warning; otherwise
+		// report the error and yield no component.
+		if cached.Found {
+			errs = append(errs, SourceError{Source: SourceEcosystems, Kind: errKind(timedOut), Err: errors.New("served cached data")})
+			return cachedComponentResult(ctx, st, cached.Value), errs
+		}
+		errs = append(errs, SourceError{Source: SourceEcosystems, Kind: errKind(timedOut), Err: err})
 		return &Result{}, errs
 	}
 

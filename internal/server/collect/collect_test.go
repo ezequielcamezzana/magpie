@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -48,18 +49,20 @@ func testConfig(st Store, eco EcosystemsFetcher, osvF OSVFetcher) Config {
 // WHY: the real Store (store/sqlite) imports this package, so an in-package
 // test importing it would create a cycle. The fake lives here.
 type fakeStore struct {
-	comps map[string]StoreResult[Component]
-	repos map[string]StoreResult[Repository]
-	vulns map[string]StoreResult[[]VulnRecord]
-	cpes  map[string]StoreResult[[]ResolvedCPE]
+	comps  map[string]StoreResult[Component]
+	repos  map[string]StoreResult[Repository]
+	vulns  map[string]StoreResult[[]VulnRecord]
+	cpes   map[string]StoreResult[[]ResolvedCPE]
+	missed map[string]time.Time
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		comps: map[string]StoreResult[Component]{},
-		repos: map[string]StoreResult[Repository]{},
-		vulns: map[string]StoreResult[[]VulnRecord]{},
-		cpes:  map[string]StoreResult[[]ResolvedCPE]{},
+		comps:  map[string]StoreResult[Component]{},
+		repos:  map[string]StoreResult[Repository]{},
+		vulns:  map[string]StoreResult[[]VulnRecord]{},
+		cpes:   map[string]StoreResult[[]ResolvedCPE]{},
+		missed: map[string]time.Time{},
 	}
 }
 
@@ -87,6 +90,20 @@ func (s *fakeStore) PutCPEs(ctx context.Context, spurl string, cpes []ResolvedCP
 	s.cpes[spurl] = StoreResult[[]ResolvedCPE]{Value: cpes, FetchedAt: time.Now().UTC(), Found: true}
 	return nil
 }
+func (s *fakeStore) GetMissedCPE(ctx context.Context, spurl string) (StoreResult[bool], error) {
+	if t, ok := s.missed[spurl]; ok {
+		return StoreResult[bool]{Value: true, FetchedAt: t, Found: true}, nil
+	}
+	return StoreResult[bool]{}, nil
+}
+func (s *fakeStore) PutMissedCPE(ctx context.Context, spurl string) error {
+	s.missed[spurl] = time.Now().UTC()
+	return nil
+}
+func (s *fakeStore) DeleteMissedCPE(ctx context.Context, spurl string) error {
+	delete(s.missed, spurl)
+	return nil
+}
 func (s *fakeStore) GetVulns(ctx context.Context, source, queryKey string) (StoreResult[[]VulnRecord], error) {
 	return s.vulns[source+"|"+queryKey], nil
 }
@@ -101,6 +118,27 @@ func (s *fakeStore) PutVulns(ctx context.Context, source, queryKey string, vs []
 func (s *fakeStore) QueryVulns(ctx context.Context, q VulnQuery) ([]VulnRecord, int, error) {
 	return nil, 0, nil
 }
+func (s *fakeStore) StaleComponents(ctx context.Context, olderThan time.Time, limit int) ([]string, error) {
+	var stale []Component
+	for _, res := range s.comps {
+		if res.FetchedAt.Before(olderThan) {
+			stale = append(stale, res.Value)
+		}
+	}
+	sort.Slice(stale, func(i, j int) bool { return stale[i].FetchedAt.Before(stale[j].FetchedAt) })
+
+	var spurls []string
+	for _, c := range stale {
+		if len(spurls) >= limit {
+			break
+		}
+		spurls = append(spurls, c.SPURL)
+	}
+	return spurls, nil
+}
+func (s *fakeStore) Metrics(ctx context.Context, staleBefore time.Time) (Metrics, error) {
+	return Metrics{}, nil
+}
 func (s *fakeStore) QueryComponents(ctx context.Context, q ComponentQuery) ([]Component, int, error) {
 	return nil, 0, nil
 }
@@ -108,6 +146,37 @@ func (s *fakeStore) QueryCPEs(ctx context.Context, q CPEQuery) ([]ResolvedCPE, i
 	return nil, 0, nil
 }
 func (s *fakeStore) Close() error { return nil }
+
+func TestCollectNVDBudgetTimeout(t *testing.T) {
+	st := newFakeStore()
+	spurl := "pkg:npm/lodash"
+	eco := &stubFetcher{
+		comp:  Component{SPURL: spurl, Name: "lodash"},
+		vulns: []VulnRecord{{Source: SourceEcosystems, QueryKey: spurl, OriginalID: "GHSA-x", CanonicalID: "CVE-2020-1"}},
+	}
+	cfg := Config{
+		Store:             st,
+		EcosystemsFetcher: eco,
+		OSVFetcher:        stubOSV{},
+		SourceBudget:      20 * time.Millisecond,
+		// A CPER that hangs until the budget fires.
+		CPER: func(ctx context.Context, _ Config, _ purl.Identity, _, _ string, _ []VulnRecord, _ time.Time) {
+			<-ctx.Done()
+		},
+	}
+
+	res, err := Collect(context.Background(), "pkg:npm/lodash@4.0.0", cfg)
+	require.NoError(t, err)
+
+	var timedOut bool
+	for _, e := range res.Errors {
+		if e.Source == SourceCPER && e.Kind == "timeout" {
+			timedOut = true
+		}
+	}
+	assert.True(t, timedOut, "want a non-fatal cper timeout error")
+	assert.NotEmpty(t, res.Groups, "eco/OSV vulns must survive the NVD/CPER timeout")
+}
 
 func TestCollectInvalidCoord(t *testing.T) {
 	res, err := Collect(context.Background(), "not-a-purl", testConfig(newFakeStore(), &stubFetcher{}, stubOSV{}))
@@ -138,7 +207,7 @@ func TestCollectStage1CacheMiss(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	res, errs := collectStage1(context.Background(), f, st, spurl, 24*time.Hour, now)
+	res, errs := collectStage1(context.Background(), f, st, spurl, 24*time.Hour, now, 0)
 	require.Empty(t, errs)
 	assert.Equal(t, 1, f.calls)
 	require.NotNil(t, res.Component)
@@ -160,7 +229,7 @@ func TestCollectStage1CacheHit(t *testing.T) {
 	_ = st.PutVulns(ctx, SourceEcosystems, spurl, []VulnRecord{{Source: SourceEcosystems, QueryKey: spurl, OriginalID: "GHSA-x", FetchedAt: now}})
 
 	f := &stubFetcher{}
-	res, errs := collectStage1(ctx, f, st, spurl, 24*time.Hour, now)
+	res, errs := collectStage1(ctx, f, st, spurl, 24*time.Hour, now, 0)
 	require.Empty(t, errs)
 	assert.Equal(t, 0, f.calls, "want fetcher not called")
 	require.NotNil(t, res.Component)
@@ -178,7 +247,7 @@ func TestCollectStage1MaxAgeZeroRefetch(t *testing.T) {
 	_ = st.PutComponent(ctx, Component{SPURL: spurl, Name: "lodash", FetchedAt: now})
 
 	f := &stubFetcher{comp: Component{SPURL: spurl, Name: "lodash"}}
-	_, errs := collectStage1(ctx, f, st, spurl, 0, now)
+	_, errs := collectStage1(ctx, f, st, spurl, 0, now, 0)
 	require.Empty(t, errs)
 	assert.Equal(t, 1, f.calls, "MaxAge=0 always refetches")
 }
@@ -192,7 +261,7 @@ func TestCollectStage1StaleRefetch(t *testing.T) {
 	_ = st.PutComponent(ctx, Component{SPURL: spurl, Name: "lodash", FetchedAt: now.Add(-48 * time.Hour)})
 
 	f := &stubFetcher{comp: Component{SPURL: spurl, Name: "lodash"}}
-	_, errs := collectStage1(ctx, f, st, spurl, 24*time.Hour, now)
+	_, errs := collectStage1(ctx, f, st, spurl, 24*time.Hour, now, 0)
 	require.Empty(t, errs)
 	assert.Equal(t, 1, f.calls, "stale entry must refetch")
 }
@@ -203,7 +272,7 @@ func TestCollectStage1FetchErrorNotFatal(t *testing.T) {
 	now := time.Now().UTC()
 
 	f := &stubFetcher{err: errors.New("boom")}
-	_, errs := collectStage1(context.Background(), f, st, spurl, 24*time.Hour, now)
+	_, errs := collectStage1(context.Background(), f, st, spurl, 24*time.Hour, now, 0)
 	require.Len(t, errs, 1)
 	assert.Equal(t, SourceEcosystems, errs[0].Source)
 }

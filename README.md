@@ -22,7 +22,7 @@
 Give magpie a [purl](https://github.com/package-url/purl-spec) and it runs the `collect.Collect` pipeline:
 
 1. **Collect** — queries upstream sources ([ecosyste.ms](https://ecosyste.ms), [OSV](https://osv.dev), [NVD](https://nvd.nist.gov)) for the component and its known vulnerabilities.
-2. **Match** — resolves affected version ranges and CPEs against the requested version.
+2. **Match** — resolves affected version ranges and CPEs against the requested version. CPE resolution reads NVD's CPE configurations by CVE through [VulnCheck](https://vulncheck.com)'s NVD2 index.
 3. **Group** — deduplicates and groups vulnerabilities by their canonical CVE.
 4. **Persist** — stores components, CPEs, and vulnerabilities in SQLite.
 
@@ -38,7 +38,7 @@ make build
 ./bin/magpie server
 ```
 
-Open the SPA at `http://localhost:8080/app` (the root `/` redirects there).
+The root `/` serves the landing site; the SPA lives at `http://localhost:8080/app`.
 
 Trigger a collection from the API:
 
@@ -57,7 +57,8 @@ All configuration is read from environment variables. See [`.env.example`](.env.
 | `MAGPIE_ADDR` | `:8080` | Address the HTTP server listens on |
 | `MAGPIE_DB_PATH` | `./magpie.db` | Path to the SQLite database file |
 | `MAGPIE_LOG` | _(empty)_ | Log format (empty = text, `json` = structured) |
-| `NVD_API_KEY` | _(empty)_ | NVD API key (raises rate limits for CPE/NVD lookups) |
+| `NVD_API_KEY` | _(empty)_ | NVD API key (raises rate limits for by-CPE NVD vuln matching) |
+| `VULNCHECK_API_KEY` | _(empty)_ | VulnCheck API token; required for CPE resolution (by-CVE NVD2 lookups). Empty disables CPE resolution |
 | `MAGPIE_MAX_AGE` | `24h` | Max age before cached source data is refreshed |
 | `MAGPIE_REQUEST_TIMEOUT` | `30s` | Per-request timeout for the HTTP API |
 
@@ -75,8 +76,8 @@ All endpoints are served at the root and accept query parameters.
 | `GET` | `/components` | List stored components |
 | `GET` | `/component` | Fetch a single component |
 | `GET` | `/cpes` | List stored CPEs |
+| `GET` | `/` | The landing site (what magpie is and how it works) |
 | `GET` | `/app` | The embedded single-page app |
-| `GET` | `/` | Redirects to `/app` |
 
 ## Development
 

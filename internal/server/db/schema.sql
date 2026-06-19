@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS vulns (
 	original_id  TEXT NOT NULL,
 	canonical_id TEXT,
 	aliases      TEXT,
+	-- summary: OSV summary||details, NVD description, eco description. El texto
+	-- que el endpoint de vulns devuelve y la UI muestra.
+	summary      TEXT NOT NULL DEFAULT '',
 	score        REAL,
 	severity     TEXT,
 	published_at TEXT,
@@ -43,7 +46,11 @@ CREATE INDEX IF NOT EXISTS idx_vulns_canonical ON vulns(canonical_id);
 CREATE TABLE IF NOT EXISTS package_vuln (
 	source              TEXT NOT NULL,
 	query_key           TEXT NOT NULL,
+	-- affected_package: el componente afectado, SIEMPRE un purl.
+	-- matched_on: el identificador con el que matcheamos — el purl (OSV/eco) o
+	-- el CPE (NVD).
 	affected_package    TEXT,
+	matched_on          TEXT NOT NULL DEFAULT '',
 	original_id         TEXT NOT NULL,
 	affected_versions   TEXT,
 	affected_ranges     TEXT,
@@ -82,3 +89,12 @@ CREATE TABLE IF NOT EXISTS cpes (
 
 CREATE INDEX IF NOT EXISTS idx_cpes_vendor_product ON cpes(vendor, product);
 CREATE INDEX IF NOT EXISTS idx_cpes_cpe ON cpes(cpe);
+
+-- missed_cpes: negative cache de CPER. Un paquete cuya búsqueda no resolvió
+-- ningún CPE se registra acá con fetched_at. Mientras el registro sea fresco
+-- (< MaxAge) CPER no vuelve a pegarle a NVD; vencido, se reintenta. Evita
+-- re-buscar en cada request los paquetes que (todavía) no tienen CPE.
+CREATE TABLE IF NOT EXISTS missed_cpes (
+	spurl      TEXT PRIMARY KEY,
+	fetched_at TEXT NOT NULL
+);

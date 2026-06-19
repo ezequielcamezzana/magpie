@@ -8,30 +8,67 @@ import (
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
 )
 
-// parseCVE decodes a raw NVD `cve` object into collect.NVDCVE: metadata + the
-// per-(vendor:product) CPE matches CPER resolves from.
-func parseCVE(raw []byte) (*collect.NVDCVE, error) {
+// ParseCVE decodes a raw NVD `cve` object into VulnRecords — one per
+// application CPE (vendor:product) the CVE declares vulnerable. Each record
+// carries the CVE metadata plus that CPE's ranges; MatchedOn holds the full
+// CPE 2.3 string so target_sw survives in the flat VulnRecord.
+func ParseCVE(raw []byte) ([]collect.VulnRecord, error) {
 	var cve rawCVE
 	if err := json.Unmarshal(raw, &cve); err != nil {
 		return nil, err
 	}
 	_, score := bestCVSS(cve.Metrics)
-	return &collect.NVDCVE{
-		ID:        cve.ID,
-		Score:     score,
-		Severity:  severityFromScore(score),
-		Published: parseTime(cve.Published),
-		Modified:  parseTime(cve.LastModified),
-		Matches:   extractMatches(cve.Configurations),
-	}, nil
+	severity := severityFromScore(score)
+	published := parseTime(cve.Published)
+	modified := parseTime(cve.LastModified)
+	summary := englishDescription(cve.Descriptions)
+
+	out := make([]collect.VulnRecord, 0, len(cve.Configurations))
+	for _, m := range extractMatches(cve.Configurations) {
+		out = append(out, collect.VulnRecord{
+			Source:      collect.SourceNVD,
+			OriginalID:  cve.ID,
+			CanonicalID: cve.ID,
+			// NVD matches on a CPE; the affected component (a purl) is filled by
+			// the caller (stage 4 knows the package).
+			MatchedOn:      collect.BuildCPE(m.vendor, m.product, m.targetSw),
+			Summary:        summary,
+			Score:          score,
+			Severity:       severity,
+			AffectedRanges: m.ranges,
+			FixedVersions:  m.fixed,
+			Published:      published,
+			Modified:       modified,
+		})
+	}
+	return out, nil
 }
 
-// extractMatches collapses every vulnerable cpeMatch into one NVDCPEMatch per
-// (vendor:product): unions version intervals (deduped), captures the first
-// non-wildcard target_sw, and the fixed versions (VersionEndExcluding).
-func extractMatches(configs []rawConfig) []collect.NVDCPEMatch {
+// englishDescription returns the en description, falling back to the first one.
+func englishDescription(ds []rawDescription) string {
+	for _, d := range ds {
+		if d.Lang == "en" {
+			return d.Value
+		}
+	}
+	if len(ds) > 0 {
+		return ds[0].Value
+	}
+	return ""
+}
+
+// cpeMatch is one (vendor:product) the CVE declares vulnerable, with its unioned
+// version intervals, the first non-wildcard target_sw, and the fixed versions.
+type cpeMatch struct {
+	vendor, product, targetSw string
+	ranges, fixed             []string
+}
+
+// extractMatches collapses every vulnerable cpeMatch into one cpeMatch per
+// (vendor:product), preserving first-seen order.
+func extractMatches(configs []rawConfig) []cpeMatch {
 	type bucket struct {
-		m       collect.NVDCPEMatch
+		m       *cpeMatch
 		seenIvl map[string]bool
 		seenFix map[string]bool
 	}
@@ -43,7 +80,7 @@ func extractMatches(configs []rawConfig) []collect.NVDCPEMatch {
 		b, ok := buckets[key]
 		if !ok {
 			b = &bucket{
-				m:       collect.NVDCPEMatch{PartialCPE: "cpe:2.3:a:" + key, Vendor: vendor, Product: product},
+				m:       &cpeMatch{vendor: vendor, product: product},
 				seenIvl: map[string]bool{},
 				seenFix: map[string]bool{},
 			}
@@ -61,24 +98,24 @@ func extractMatches(configs []rawConfig) []collect.NVDCPEMatch {
 					continue
 				}
 				b := get(d.vendor, d.product)
-				if d.targetSw != "" && d.targetSw != "*" && b.m.TargetSw == "" {
-					b.m.TargetSw = d.targetSw
+				if d.targetSw != "" && d.targetSw != "*" && b.m.targetSw == "" {
+					b.m.targetSw = d.targetSw
 				}
 				if d.interval != "" && !b.seenIvl[d.interval] {
 					b.seenIvl[d.interval] = true
-					b.m.AffectedRanges = append(b.m.AffectedRanges, d.interval)
+					b.m.ranges = append(b.m.ranges, d.interval)
 				}
 				if d.fixed != "" && !b.seenFix[d.fixed] {
 					b.seenFix[d.fixed] = true
-					b.m.FixedVersions = append(b.m.FixedVersions, d.fixed)
+					b.m.fixed = append(b.m.fixed, d.fixed)
 				}
 			}
 		}
 	}
 
-	out := make([]collect.NVDCPEMatch, 0, len(order))
+	out := make([]cpeMatch, 0, len(order))
 	for _, key := range order {
-		out = append(out, buckets[key].m)
+		out = append(out, *buckets[key].m)
 	}
 	return out
 }
@@ -171,11 +208,17 @@ func parseTime(s string) time.Time {
 
 // Raw NVD CVE shapes — only the fields CPER maps.
 type rawCVE struct {
-	ID             string      `json:"id"`
-	Published      string      `json:"published"`
-	LastModified   string      `json:"lastModified"`
-	Metrics        rawMetrics  `json:"metrics"`
-	Configurations []rawConfig `json:"configurations"`
+	ID             string           `json:"id"`
+	Published      string           `json:"published"`
+	LastModified   string           `json:"lastModified"`
+	Descriptions   []rawDescription `json:"descriptions"`
+	Metrics        rawMetrics       `json:"metrics"`
+	Configurations []rawConfig      `json:"configurations"`
+}
+
+type rawDescription struct {
+	Lang  string `json:"lang"`
+	Value string `json:"value"`
 }
 
 type rawMetrics struct {

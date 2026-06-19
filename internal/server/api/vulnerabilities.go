@@ -14,10 +14,32 @@ type vulnsResponse struct {
 	Total   int                  `json:"total"`
 }
 
+// normalizeSource whitelists the source filter; unknown → "" (all sources).
+func normalizeSource(s string) string {
+	switch s {
+	case collect.SourceEcosystems, collect.SourceOSV, collect.SourceNVD:
+		return s
+	default:
+		return ""
+	}
+}
+
+// normalizeVulnOrder whitelists the sort key; unknown → "" (default order).
+func normalizeVulnOrder(o string) string {
+	switch o {
+	case "cvss", "updated", "created":
+		return o
+	default:
+		return ""
+	}
+}
+
 func handleVulnerabilities(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		id := q.Get("id")
+		source := normalizeSource(q.Get("source"))
+		order := normalizeVulnOrder(q.Get("order"))
 
 		page := 1
 		if p, err := strconv.Atoi(q.Get("page")); err == nil && p >= 1 {
@@ -34,8 +56,10 @@ func handleVulnerabilities(deps Deps) http.HandlerFunc {
 			limit = 100
 		}
 
+		// List view: search by substring and show each vuln once even when it
+		// affects several packages.
 		recs, total, err := deps.Config.Store.QueryVulns(r.Context(), collect.VulnQuery{
-			ID: id, Page: page, Limit: limit,
+			ID: id, Fuzzy: true, Source: source, Order: order, Collapse: true, Page: page, Limit: limit,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

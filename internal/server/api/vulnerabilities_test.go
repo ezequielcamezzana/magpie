@@ -85,10 +85,13 @@ func TestVulnsFilterByCanonicalID(t *testing.T) {
 		}))
 	})
 
+	// GHSA-abc (ecosyste.ms) and CVE-2024-1 (osv) share canonical CVE-2024-1:
+	// the list collapses them into a single logical vuln.
 	resp, out := getVulns(t, srv, "?id=CVE-2024-1")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.GreaterOrEqual(t, out.Total, 2)
-	assert.GreaterOrEqual(t, len(out.Records), 2)
+	assert.Equal(t, 1, out.Total)
+	require.Len(t, out.Records, 1)
+	assert.Equal(t, "CVE-2024-1", out.Records[0].CanonicalID)
 }
 
 func TestVulnsPagination(t *testing.T) {

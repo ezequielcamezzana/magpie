@@ -57,7 +57,7 @@ func fakeUpstream(t *testing.T, calls *int64) *httptest.Server {
 // realEcosystems builds the REAL ecosyste.ms client pointed at the fake
 // upstream.
 func realEcosystems(upstreamURL string) *ecosystems.Client {
-	c := ecosystems.New(nil, slog.Default())
+	c := ecosystems.New(nil)
 	// BaseURL is concatenated with "{registry}/packages/{name}", so the
 	// trailing slash makes the final URL /{registry}/packages/{name}.
 	c.BaseURL = upstreamURL + "/"
@@ -68,7 +68,7 @@ func newE2EServer(t *testing.T, db collect.Store, eco collect.EcosystemsFetcher,
 	t.Helper()
 	r := chi.NewRouter()
 	api.Mount(r, api.Deps{
-		Config: collect.Config{Store: db, MaxAge: maxAge, EcosystemsFetcher: eco, OSVFetcher: noopOSV{}},
+		Config: collect.Config{Store: db, MaxAge: collect.UniformMaxAge(maxAge), EcosystemsFetcher: eco, OSVFetcher: noopOSV{}},
 		Logger: slog.Default(),
 	})
 	srv := httptest.NewServer(r)

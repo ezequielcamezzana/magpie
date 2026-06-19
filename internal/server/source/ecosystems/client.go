@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,15 +53,14 @@ var registryByType = map[string]string{
 
 type Client struct {
 	httpc   *http.Client
-	logger  *slog.Logger
 	BaseURL string
 }
 
-func New(httpc *http.Client, logger *slog.Logger) *Client {
+func New(httpc *http.Client) *Client {
 	if httpc == nil {
 		httpc = http.DefaultClient
 	}
-	return &Client{httpc: httpc, logger: logger, BaseURL: defaultBaseURL}
+	return &Client{httpc: httpc, BaseURL: defaultBaseURL}
 }
 
 // Fetch retrieves package, repository and advisory data for a single SPURL.
@@ -193,6 +191,7 @@ func mapAdvisory(adv *rawAdvisory, payload json.RawMessage, queryKey string, id 
 		// WHY: canonical (CVE) derivation is Group's job; the client leaves
 		// CanonicalID empty and collect stamps it before persisting.
 		CanonicalID: "",
+		Summary:     adv.Description,
 		Score:       adv.CVSSScore,
 		// TODO: severity normalization is deferred; passed through as-is.
 		Severity:  adv.Severity,

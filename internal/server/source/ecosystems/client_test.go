@@ -39,7 +39,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 
 func newTestClient(t *testing.T) *Client {
 	srv := newTestServer(t)
-	c := New(srv.Client(), nil)
+	c := New(srv.Client())
 	c.BaseURL = srv.URL + "/"
 	return c
 }
