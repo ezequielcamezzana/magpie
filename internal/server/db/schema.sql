@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS vulns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_vulns_canonical ON vulns(canonical_id);
+-- vulns PK is (source, original_id); a by-id read matches original_id alone
+-- (OR canonical_id), so index original_id for the /vuln OR-lookup.
+CREATE INDEX IF NOT EXISTS idx_vulns_original ON vulns(original_id);
 
 -- package_vuln: impacto de una vuln sobre un paquete. query_key es la key de
 -- cache/replacement (eco:name, spurl); affected_package es el purl real del
@@ -60,6 +63,11 @@ CREATE TABLE IF NOT EXISTS package_vuln (
 	PRIMARY KEY (source, query_key, original_id),
 	FOREIGN KEY (source, original_id) REFERENCES vulns(source, original_id)
 );
+
+-- The PK is (source, query_key, original_id), so joins/FK lookups by
+-- (source, original_id) — the vulns join and the /vuln by-id read — aren't
+-- covered. SQLite doesn't auto-index FK child columns; index it explicitly.
+CREATE INDEX IF NOT EXISTS idx_package_vuln_source_oid ON package_vuln(source, original_id);
 
 -- cpes: un CPE resuelto por fila (no un blob JSON). Columnas escalares para que
 -- el usuario pueda buscar por vendor/product/cpe además del spurl asociado; las

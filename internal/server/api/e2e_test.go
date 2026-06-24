@@ -118,6 +118,35 @@ func TestE2ECacheHit(t *testing.T) {
 	assert.Equal(t, int64(1), atomic.LoadInt64(&calls), "second request should come from the cache")
 }
 
+// Toggling the affected/all filter (or paging) hits /bundle, which must read
+// the already-collected data from the store WITHOUT re-running the pipeline —
+// so it adds zero upstream calls after the initial /collect.
+func TestE2EBundleDoesNotRecollect(t *testing.T) {
+	var calls int64
+	upstream := fakeUpstream(t, &calls)
+	srv := newE2EServer(t, openMemStore(t), realEcosystems(upstream.URL), time.Hour)
+
+	resp, err := http.Get(srv.URL + "/collect?purl=pkg:npm/chalk@5.0.0")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	afterCollect := atomic.LoadInt64(&calls)
+
+	// Re-paginate with the affected/all filter: pure store read, no new calls.
+	for _, vfilter := range []string{"all", "affected"} {
+		resp, err := http.Get(srv.URL + "/bundle?purl=pkg:npm/chalk@5.0.0&vfilter=" + vfilter)
+		require.NoError(t, err)
+		var res collect.Result
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&res))
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NotNil(t, res.Component, "bundle serves the stored component")
+		assert.Equal(t, "chalk", res.Component.Name)
+	}
+
+	assert.Equal(t, afterCollect, atomic.LoadInt64(&calls), "/bundle must not re-fetch")
+}
+
 func TestE2ECollectMinimist(t *testing.T) {
 	var calls int64
 	upstream := fakeUpstream(t, &calls)

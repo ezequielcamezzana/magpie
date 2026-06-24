@@ -19,6 +19,7 @@ func main() {
 	root.AddCommand(
 		commands.NewVersionCmd(),
 		commands.NewServerCmd(),
+		commands.NewDeleteCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

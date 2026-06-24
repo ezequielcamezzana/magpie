@@ -41,9 +41,7 @@
             // NVD record URL — only shown for NVD-sourced records (id is the CVE).
             function nvdURL(v) {
                 const cve = v.CanonicalID || v.OriginalID;
-                return cve
-                    ? "https://nvd.nist.gov/vuln/detail/" + cve
-                    : "";
+                return cve ? "https://nvd.nist.gov/vuln/detail/" + cve : "";
             }
 
             // Grouped advisory card (.vc-card) helpers — Collect view.
@@ -134,7 +132,9 @@
                     const r = route();
                     if (r.startsWith("vuln/")) return "vuln";
                     if (r.startsWith("component/")) return "component";
-                    return ["vulns", "components", "cpes"].includes(r) ? r : "collect";
+                    return ["vulns", "components", "cpes"].includes(r)
+                        ? r
+                        : "collect";
                 };
                 return {
                     view: fromPath(),
@@ -158,7 +158,14 @@
                         return (h && h.status) || "unknown";
                     },
                     srcLabel(src) {
-                        return { "ecosyste.ms": "eco", osv: "osv", nvd: "nvd", vulncheck: "vc" }[src] || src;
+                        return (
+                            {
+                                "ecosyste.ms": "eco",
+                                osv: "osv",
+                                nvd: "nvd",
+                                vulncheck: "vc",
+                            }[src] || src
+                        );
                     },
                     srcTip(src) {
                         const h = this.sources[src];
@@ -215,7 +222,9 @@
                             this.loadMetrics();
                             // Deep link: /app/collect?purl=… loads the page and
                             // launches the collect for that purl.
-                            const purl = new URLSearchParams(location.search).get("purl");
+                            const purl = new URLSearchParams(
+                                location.search,
+                            ).get("purl");
                             if (purl) {
                                 this.coord = purl;
                                 this.run();
@@ -264,7 +273,7 @@
                         );
                         this.vpage = 1;
                         this.expanded = {};
-                        this.load();
+                        this.load(true);
                     },
                     // Dashboard counts for the collect landing. Best-effort:
                     // a failed fetch just leaves the boxes hidden.
@@ -298,7 +307,11 @@
                             this.load();
                         }
                     },
-                    async load() {
+                    // recollect=true re-runs the collect pipeline (hits sources);
+                    // false reads the already-collected bundle from the store. Only
+                    // run() (an explicit submit) re-collects — filter/order/page
+                    // changes just re-paginate what /collect already persisted.
+                    async load(recollect = false) {
                         let url;
                         if (this.mode === "component") {
                             if (!this.spurl) return;
@@ -313,7 +326,7 @@
                             const coord = this.normalizedCoord();
                             if (!coord) return;
                             url =
-                                "/collect?" +
+                                (recollect ? "/collect?" : "/bundle?") +
                                 new URLSearchParams({
                                     purl: coord,
                                     vpage: this.vpage,
@@ -334,8 +347,10 @@
                             this.result = await r.json();
                             this.vmeta = this.result.Vuln || this.vmeta;
                             // A fresh collect may add a component/vulns/CPEs —
-                            // refresh the dashboard so the change is visible.
-                            if (this.mode === "collect") this.loadMetrics();
+                            // refresh the dashboard so the change is visible. A
+                            // store re-paginate changes nothing, so skip it.
+                            if (this.mode === "collect" && recollect)
+                                this.loadMetrics();
                         } catch (e) {
                             this.error = String(e);
                             this.result = null;
@@ -485,9 +500,7 @@
                     error: null,
                     init() {
                         this.sync();
-                        window.addEventListener("popstate", () =>
-                            this.sync(),
-                        );
+                        window.addEventListener("popstate", () => this.sync());
                     },
                     sync() {
                         const m = route().match(/^vuln\/(.+)$/);
@@ -563,7 +576,6 @@
             function vulns() {
                 return {
                     id: "",
-                    source: "",
                     order: "",
                     page: 1,
                     limit: 24,
@@ -610,7 +622,6 @@
                                 "/vulnerabilities?" +
                                     new URLSearchParams({
                                         id: this.id,
-                                        source: this.source,
                                         order: this.order,
                                         page: this.page,
                                         limit: this.limit,
@@ -801,7 +812,9 @@
                                         class="metric-num"
                                         x-text="metrics ? metrics.vulnerabilities : 0"
                                     ></div>
-                                    <div class="metric-label">Vulnerabilities</div>
+                                    <div class="metric-label">
+                                        Vulnerabilities
+                                    </div>
                                 </div>
                                 <div
                                     class="metric"
@@ -1028,94 +1041,40 @@
 
                                 <template x-if="result.Repository">
                                     <div class="pkg-repo">
-                                        <div class="pkg-repo-label">
-                                            <svg
-                                                viewBox="0 0 24 24"
-                                                fill="currentColor"
-                                                aria-hidden="true"
-                                            >
-                                                <path
-                                                    d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
-                                                />
-                                            </svg>
-                                            Repository
-                                        </div>
-                                        <div class="pkg-repo-stats">
-                                            <span class="pkg-stat">
+                                        <div class="pkg-repo-main">
+                                            <div class="pkg-repo-label">
                                                 <svg
                                                     viewBox="0 0 24 24"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    stroke-width="2"
-                                                    stroke-linecap="round"
-                                                    stroke-linejoin="round"
+                                                    fill="currentColor"
                                                     aria-hidden="true"
                                                 >
-                                                    <polygon
-                                                        points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
-                                                    />
-                                                </svg>
-                                                <b
-                                                    x-text="result.Repository.Stars.toLocaleString()"
-                                                ></b>
-                                                stars
-                                            </span>
-                                            <span class="pkg-stat">
-                                                <svg
-                                                    viewBox="0 0 24 24"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    stroke-width="2"
-                                                    stroke-linecap="round"
-                                                    stroke-linejoin="round"
-                                                    aria-hidden="true"
-                                                >
-                                                    <circle
-                                                        cx="12"
-                                                        cy="18"
-                                                        r="3"
-                                                    />
-                                                    <circle
-                                                        cx="6"
-                                                        cy="6"
-                                                        r="3"
-                                                    />
-                                                    <circle
-                                                        cx="18"
-                                                        cy="6"
-                                                        r="3"
-                                                    />
                                                     <path
-                                                        d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"
+                                                        d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
                                                     />
-                                                    <path d="M12 12v3" />
                                                 </svg>
-                                                <b
-                                                    x-text="result.Repository.Forks.toLocaleString()"
-                                                ></b>
-                                                forks
-                                            </span>
-                                            <span
-                                                class="pkg-stat"
-                                                x-show="result.Repository.Language"
-                                            >
-                                                <span
-                                                    class="pkg-lang-dot"
-                                                ></span>
-                                                <span
-                                                    x-text="result.Repository.Language"
-                                                ></span>
-                                            </span>
-                                        </div>
-                                        <div
-                                            class="pkg-repo-dates"
-                                            x-show="!vcEmptyDate(result.Repository.LastPush) || !vcEmptyDate(result.Repository.LastRelease)"
-                                        >
-                                            <div
-                                                class="pkg-date"
-                                                x-show="!vcEmptyDate(result.Repository.LastPush)"
-                                            >
-                                                <div class="pkg-dlabel">
+                                                Repository
+                                            </div>
+                                            <div class="pkg-repo-stats">
+                                                <span class="pkg-stat">
+                                                    <svg
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="2"
+                                                        stroke-linecap="round"
+                                                        stroke-linejoin="round"
+                                                        aria-hidden="true"
+                                                    >
+                                                        <polygon
+                                                            points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+                                                        />
+                                                    </svg>
+                                                    <b
+                                                        x-text="result.Repository.Stars.toLocaleString()"
+                                                    ></b>
+                                                    stars
+                                                </span>
+                                                <span class="pkg-stat">
                                                     <svg
                                                         viewBox="0 0 24 24"
                                                         fill="none"
@@ -1127,71 +1086,139 @@
                                                     >
                                                         <circle
                                                             cx="12"
-                                                            cy="12"
+                                                            cy="18"
                                                             r="3"
                                                         />
-                                                        <line
-                                                            x1="3"
-                                                            x2="9"
-                                                            y1="12"
-                                                            y2="12"
-                                                        />
-                                                        <line
-                                                            x1="15"
-                                                            x2="21"
-                                                            y1="12"
-                                                            y2="12"
-                                                        />
-                                                    </svg>
-                                                    Last push
-                                                </div>
-                                                <div
-                                                    class="pkg-dval"
-                                                    x-text="vcFmtDate(result.Repository.LastPush)"
-                                                ></div>
-                                                <div
-                                                    class="pkg-drel"
-                                                    x-show="vcRel(result.Repository.LastPush)"
-                                                    x-text="'(' + vcRel(result.Repository.LastPush) + ')'"
-                                                ></div>
-                                            </div>
-                                            <div
-                                                class="pkg-date"
-                                                x-show="!vcEmptyDate(result.Repository.LastRelease)"
-                                            >
-                                                <div class="pkg-dlabel">
-                                                    <svg
-                                                        viewBox="0 0 24 24"
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        stroke-width="2"
-                                                        stroke-linecap="round"
-                                                        stroke-linejoin="round"
-                                                        aria-hidden="true"
-                                                    >
-                                                        <path
-                                                            d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"
+                                                        <circle
+                                                            cx="6"
+                                                            cy="6"
+                                                            r="3"
                                                         />
                                                         <circle
-                                                            cx="7.5"
-                                                            cy="7.5"
-                                                            r=".5"
-                                                            fill="currentColor"
+                                                            cx="18"
+                                                            cy="6"
+                                                            r="3"
                                                         />
+                                                        <path
+                                                            d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"
+                                                        />
+                                                        <path d="M12 12v3" />
                                                     </svg>
-                                                    Last release
+                                                    <b
+                                                        x-text="result.Repository.Forks.toLocaleString()"
+                                                    ></b>
+                                                    forks
+                                                </span>
+                                                <span
+                                                    class="pkg-stat"
+                                                    x-show="result.Repository.Language"
+                                                >
+                                                    <span
+                                                        class="pkg-lang-dot"
+                                                    ></span>
+                                                    <span
+                                                        x-text="result.Repository.Language"
+                                                    ></span>
+                                                </span>
+                                            </div>
+                                            <div
+                                                class="pkg-repo-dates"
+                                                x-show="!vcEmptyDate(result.Repository.LastPush) || !vcEmptyDate(result.Repository.LastRelease)"
+                                            >
+                                                <div
+                                                    class="pkg-date"
+                                                    x-show="!vcEmptyDate(result.Repository.LastPush)"
+                                                >
+                                                    <div class="pkg-dlabel">
+                                                        <svg
+                                                            viewBox="0 0 24 24"
+                                                            fill="none"
+                                                            stroke="currentColor"
+                                                            stroke-width="2"
+                                                            stroke-linecap="round"
+                                                            stroke-linejoin="round"
+                                                            aria-hidden="true"
+                                                        >
+                                                            <circle
+                                                                cx="12"
+                                                                cy="12"
+                                                                r="3"
+                                                            />
+                                                            <line
+                                                                x1="3"
+                                                                x2="9"
+                                                                y1="12"
+                                                                y2="12"
+                                                            />
+                                                            <line
+                                                                x1="15"
+                                                                x2="21"
+                                                                y1="12"
+                                                                y2="12"
+                                                            />
+                                                        </svg>
+                                                        Last push
+                                                    </div>
+                                                    <div
+                                                        class="pkg-dval"
+                                                        x-text="vcFmtDate(result.Repository.LastPush)"
+                                                    ></div>
+                                                    <div
+                                                        class="pkg-drel"
+                                                        x-show="vcRel(result.Repository.LastPush)"
+                                                        x-text="'(' + vcRel(result.Repository.LastPush) + ')'"
+                                                    ></div>
                                                 </div>
                                                 <div
-                                                    class="pkg-dval"
-                                                    x-text="vcFmtDate(result.Repository.LastRelease)"
-                                                ></div>
-                                                <div
-                                                    class="pkg-drel"
-                                                    x-show="vcRel(result.Repository.LastRelease)"
-                                                    x-text="'(' + vcRel(result.Repository.LastRelease) + ')'"
-                                                ></div>
+                                                    class="pkg-date"
+                                                    x-show="!vcEmptyDate(result.Repository.LastRelease)"
+                                                >
+                                                    <div class="pkg-dlabel">
+                                                        <svg
+                                                            viewBox="0 0 24 24"
+                                                            fill="none"
+                                                            stroke="currentColor"
+                                                            stroke-width="2"
+                                                            stroke-linecap="round"
+                                                            stroke-linejoin="round"
+                                                            aria-hidden="true"
+                                                        >
+                                                            <path
+                                                                d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"
+                                                            />
+                                                            <circle
+                                                                cx="7.5"
+                                                                cy="7.5"
+                                                                r=".5"
+                                                                fill="currentColor"
+                                                            />
+                                                        </svg>
+                                                        Last release
+                                                    </div>
+                                                    <div
+                                                        class="pkg-dval"
+                                                        x-text="vcFmtDate(result.Repository.LastRelease)"
+                                                    ></div>
+                                                    <div
+                                                        class="pkg-drel"
+                                                        x-show="vcRel(result.Repository.LastRelease)"
+                                                        x-text="'(' + vcRel(result.Repository.LastRelease) + ')'"
+                                                    ></div>
+                                                </div>
                                             </div>
                                         </div>
+                                        <template
+                                            x-if="result.Component && result.Component.Description"
+                                        >
+                                            <div class="pkg-repo-desc">
+                                                <div class="pkg-repo-label">
+                                                    About
+                                                </div>
+                                                <p
+                                                    x-text="result.Component.Description"
+                                                ></p>
+                                            </div>
+                                        </template>
                                     </div>
                                 </template>
                             </div>
@@ -1572,16 +1599,6 @@
                         />
                         <select
                             class="select-pill"
-                            x-model="source"
-                            @change="onChange()"
-                        >
-                            <option value="">All sources</option>
-                            <option value="ecosyste.ms">ecosyste.ms</option>
-                            <option value="osv">OSV</option>
-                            <option value="nvd">NVD</option>
-                        </select>
-                        <select
-                            class="select-pill"
                             x-model="order"
                             @change="onChange()"
                         >
@@ -1639,12 +1656,7 @@
                                     <div class="svc-title-wrap">
                                         <span
                                             class="svc-canonical"
-                                            x-text="v.OriginalID"
-                                        ></span>
-                                        <span
-                                            class="svc-paren"
-                                            x-show="v.CanonicalID && v.CanonicalID !== v.OriginalID"
-                                            x-text="'(' + v.CanonicalID + ')'"
+                                            x-text="v.CanonicalID || v.OriginalID"
                                         ></span>
                                     </div>
                                     <div class="svc-scores">
@@ -1666,89 +1678,14 @@
                                                 x-text="vcLabel(v.Score)"
                                             ></span>
                                         </span>
-                                        <span
-                                            class="svc-src-pill"
-                                            x-show="v.Source"
-                                            x-text="v.Source"
-                                        ></span>
                                     </div>
-                                </div>
-
-                                <div class="svc-links">
-                                    <a
-                                        class="svc-link"
-                                        x-show="githubURL(v)"
-                                        :href="githubURL(v)"
-                                        @click.stop
-                                        target="_blank"
-                                        rel="noopener"
-                                    >
-                                        <svg
-                                            viewBox="0 0 24 24"
-                                            fill="currentColor"
-                                            aria-hidden="true"
-                                        >
-                                            <path
-                                                d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.8 1.6 2.6 1.4.1-.7.4-1.2.7-1.5-2.5-.3-5.1-1.3-5.1-5.6 0-1.2.4-2.2 1.1-3-.1-.3-.5-1.4.1-2.9 0 0 .9-.3 3 1.1.9-.2 1.8-.4 2.7-.4.9 0 1.8.1 2.7.4 2.1-1.4 3-1.1 3-1.1.6 1.5.2 2.6.1 2.9.7.8 1.1 1.8 1.1 3 0 4.3-2.6 5.3-5.1 5.6.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"
-                                            />
-                                        </svg>
-                                        GitHub advisory
-                                    </a>
-                                    <a
-                                        class="svc-link"
-                                        x-show="v.Source==='osv'"
-                                        :href="osvURL(v)"
-                                        @click.stop
-                                        target="_blank"
-                                        rel="noopener"
-                                    >
-                                        <svg
-                                            viewBox="0 0 24 24"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                            aria-hidden="true"
-                                        >
-                                            <path d="M15 3h6v6" />
-                                            <path d="M10 14 21 3" />
-                                            <path
-                                                d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
-                                            />
-                                        </svg>
-                                        OSV
-                                    </a>
-                                    <a
-                                        class="svc-link"
-                                        x-show="v.Source==='nvd' && nvdURL(v)"
-                                        :href="nvdURL(v)"
-                                        @click.stop
-                                        target="_blank"
-                                        rel="noopener"
-                                    >
-                                        <svg
-                                            viewBox="0 0 24 24"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                            aria-hidden="true"
-                                        >
-                                            <path d="M15 3h6v6" />
-                                            <path d="M10 14 21 3" />
-                                            <path
-                                                d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
-                                            />
-                                        </svg>
-                                        NVD
-                                    </a>
                                 </div>
 
                                 <div class="svc-dates">
                                     <span>
-                                        <span class="svc-dlabel"
+                                        <span
+                                            class="svc-dlabel"
+                                            title="Published"
                                             >Published</span
                                         >
                                         <span
@@ -1766,7 +1703,9 @@
                                         >·</span
                                     >
                                     <span x-show="!vcEmptyDate(v.Modified)">
-                                        <span class="svc-dlabel">Updated</span>
+                                        <span class="svc-dlabel" title="Updated"
+                                            >Updated</span
+                                        >
                                         <span
                                             x-text="vcFmtDate(v.Modified)"
                                         ></span>
@@ -1899,18 +1838,53 @@
                                     </a>
                                 </div>
                                 <div class="cmp-body">
-                                    <div class="cmp-name" x-text="c.Name"></div>
                                     <div
-                                        class="cmp-ver"
-                                        x-show="c.SPURL"
-                                        x-text="c.SPURL"
+                                        class="cmp-name"
+                                        x-text="c.Name"
+                                        :title="c.Name"
                                     ></div>
                                 </div>
-                                <span
-                                    class="cmp-eco"
-                                    x-show="ecoOf(c.SPURL)"
-                                    x-text="ecoOf(c.SPURL)"
-                                ></span>
+                                <div class="cmp-pills">
+                                    <span
+                                        class="cmp-eco"
+                                        x-show="ecoOf(c.SPURL)"
+                                        x-text="ecoOf(c.SPURL)"
+                                    ></span>
+                                    <button
+                                        type="button"
+                                        class="cmp-purl"
+                                        x-data="{ copied: false }"
+                                        :class="copied && 'is-copied'"
+                                        :title="c.SPURL"
+                                        :aria-label="'Copy purl: ' + c.SPURL"
+                                        @click.stop="navigator.clipboard && navigator.clipboard.writeText(c.SPURL); copied = true; setTimeout(() => copied = false, 1200)"
+                                    >
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <rect
+                                                x="9"
+                                                y="9"
+                                                width="13"
+                                                height="13"
+                                                rx="2"
+                                                ry="2"
+                                            />
+                                            <path
+                                                d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                                            />
+                                        </svg>
+                                        <span
+                                            x-text="copied ? 'copied' : 'pURL'"
+                                        ></span>
+                                    </button>
+                                </div>
                             </div>
                         </template>
                     </div>
@@ -2254,12 +2228,7 @@
             </section>
         </main>
 
-        <main
-            class="container"
-            x-data="cpes()"
-            x-show="view==='cpes'"
-            x-cloak
-        >
+        <main class="container" x-data="cpes()" x-show="view==='cpes'" x-cloak>
             <section class="section">
                 <div class="filter-bar">
                     <div class="filter-left">
@@ -2322,8 +2291,12 @@
                                         >
                                             <path d="M3 7V5a2 2 0 0 1 2-2h2" />
                                             <path d="M17 3h2a2 2 0 0 1 2 2v2" />
-                                            <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
-                                            <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                                            <path
+                                                d="M21 17v2a2 2 0 0 1-2 2h-2"
+                                            />
+                                            <path
+                                                d="M7 21H5a2 2 0 0 1-2-2v-2"
+                                            />
                                             <path d="M7 12h10" />
                                         </svg>
                                     </span>
@@ -2342,10 +2315,6 @@
                                             x-text="parts(c).product"
                                         ></span>
                                     </span>
-                                    <span
-                                        class="cpe-count"
-                                        x-text="nMatched(c) + '/4 matched'"
-                                    ></span>
                                 </div>
 
                                 <div
@@ -2469,7 +2438,7 @@
                                         class="cpe-purl"
                                         x-show="c.SPURL"
                                         @click="nav('component/'+encodeURIComponent(c.SPURL))"
-                                        title="Open component"
+                                        :title="'Open component — ' + c.SPURL"
                                         x-text="c.SPURL"
                                     ></span>
                                     <a

@@ -40,6 +40,13 @@ func (errOSV) Query(ctx context.Context, q purl.OSVQuery) ([]collect.VulnRecord,
 	return nil, errors.New("osv down")
 }
 
+// errEco fails every fetch (e.g. ecosyste.ms 404 for a removed package).
+type errEco struct{}
+
+func (errEco) Fetch(ctx context.Context, spurl string) (collect.Component, *collect.Repository, []collect.VulnRecord, error) {
+	return collect.Component{}, nil, nil, errors.New("ecosyste.ms down")
+}
+
 func newWorker(t *testing.T, eco collect.EcosystemsFetcher, batch int) *Worker {
 	t.Helper()
 	store, err := db.Open(":memory:")
@@ -81,7 +88,7 @@ func TestTickRefreshesOldestStaleUpToBatch(t *testing.T) {
 	assert.Empty(t, stale)
 }
 
-func TestTickKeepsStaleWhenCoreSourceFails(t *testing.T) {
+func TestTickDrainsEvenWhenSourceFails(t *testing.T) {
 	store, err := db.Open(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
@@ -95,11 +102,62 @@ func TestTickKeepsStaleWhenCoreSourceFails(t *testing.T) {
 
 	w.tick(ctx)
 
-	// OSV is a core source, so its failure must NOT advance fetched_at — the
-	// package stays stale and gets retried next cycle.
+	// A source error is logged, not retried: fetched_at advances so the package
+	// drains and the updater never loops on it.
 	stale, err := store.StaleComponents(ctx, now.Add(-12*time.Hour), 10)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"pkg:npm/axios"}, stale, "core failure keeps the package stale")
+	assert.Empty(t, stale, "a source error must not keep the package stale")
+}
+
+// TestTickDrainsWhenEcosystemsServesCached is the dotenv-sync regression: the
+// ecosyste.ms fetch fails but cached data exists, so stage 1 serves the cached
+// component WITHOUT re-storing it. The updater must still advance fetched_at so
+// the package drains instead of being re-picked every tick forever.
+func TestTickDrainsWhenEcosystemsServesCached(t *testing.T) {
+	store, err := db.Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	cfg := collect.Config{Store: store, EcosystemsFetcher: errEco{}, OSVFetcher: stubOSV{}}
+	w := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Minute, 12*time.Hour, 1)
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, store.PutComponent(ctx, collect.Component{
+		SPURL: "pkg:pypi/dotenv-sync", Name: "dotenv-sync", FetchedAt: now.Add(-30 * time.Hour),
+	}))
+
+	w.tick(ctx)
+
+	stale, err := store.StaleComponents(ctx, now.Add(-12*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Empty(t, stale, "served-cached must advance fetched_at so the package drains")
+
+	// The cached metadata survived (not wiped by the stamp).
+	got, _ := store.GetComponent(ctx, "pkg:pypi/dotenv-sync")
+	require.True(t, got.Found)
+	assert.Equal(t, "dotenv-sync", got.Value.Name)
+}
+
+// TestTickDrainsLegacyNonNormalizedKey is the pkg:cargo/Deno regression: a row
+// keyed by a non-normalized spurl (predates purl.Strip's case fold) is picked,
+// but Collect normalizes to pkg:cargo/deno and stamps THAT key. The picked row
+// must still drain, otherwise the updater re-picks it every tick forever.
+func TestTickDrainsLegacyNonNormalizedKey(t *testing.T) {
+	eco := &stubEco{}
+	w := newWorker(t, eco, 1)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	require.NoError(t, w.store.PutComponent(ctx, collect.Component{
+		SPURL: "pkg:cargo/Deno", FetchedAt: now.Add(-30 * time.Hour),
+	}))
+
+	w.tick(ctx)
+
+	stale, err := w.store.StaleComponents(ctx, now.Add(-12*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Empty(t, stale, "a legacy non-normalized key must drain, not loop forever")
 }
 
 func TestTickIdleWhenNothingStale(t *testing.T) {

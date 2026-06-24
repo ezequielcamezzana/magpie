@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -81,12 +80,12 @@ func (c *Client) queryBody(ctx context.Context, q purl.OSVQuery, body map[string
 
 	resp, err := c.httpc.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &collect.HTTPError{Err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("osv: unexpected status %d", resp.StatusCode)
+		return nil, &collect.HTTPError{Status: resp.StatusCode}
 	}
 
 	// COMPLEX: we keep each vuln's raw bytes for Payload, so decode into

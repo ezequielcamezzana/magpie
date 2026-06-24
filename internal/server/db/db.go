@@ -14,6 +14,7 @@ import (
 	_ "embed"
 
 	"github.com/ezequielcamezzana/magpie/internal/server/collect"
+	"github.com/ezequielcamezzana/magpie/internal/server/purl"
 
 	_ "modernc.org/sqlite"
 )
@@ -55,6 +56,9 @@ func Open(dsn string) (*Store, error) {
 		`ALTER TABLE cpes ADD COLUMN osv_ranges TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE vulns ADD COLUMN summary TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE package_vuln ADD COLUMN matched_on TEXT NOT NULL DEFAULT ''`,
+		// Indexes for the vulns join / by-id read (idempotent on existing DBs).
+		`CREATE INDEX IF NOT EXISTS idx_package_vuln_source_oid ON package_vuln(source, original_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_vulns_original ON vulns(original_id)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
@@ -62,7 +66,125 @@ func Open(dsn string) (*Store, error) {
 		}
 	}
 
+	if err := foldLegacyKeys(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("fold legacy keys: %w", err)
+	}
+
 	return &Store{db: db}, nil
+}
+
+// foldLegacyKeys rewrites pre-fold storage keys to their normalized form.
+// purl.Strip began case-folding namespace/name (cargo, npm, …) after some rows
+// were already written, so the DB can hold a legacy pkg:cargo/Deno beside the
+// canonical pkg:cargo/deno. Left alone the updater re-picks the un-normalized
+// component forever and the UI lists duplicates. This collapses every legacy key
+// into its canonical form across the spurl-keyed tables; the canonical row wins
+// on conflict. Idempotent — once every key is normalized it's a no-op.
+func foldLegacyKeys(db *sql.DB) error {
+	ctx := context.Background()
+
+	folds, err := legacyFolds(ctx, db)
+	if err != nil {
+		return fmt.Errorf("scan legacy keys: %w", err)
+	}
+	if len(folds) == 0 {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	for legacy, canonical := range folds {
+		if err := foldKey(ctx, tx, legacy, canonical); err != nil {
+			return fmt.Errorf("fold %q: %w", legacy, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// legacyFolds maps each stored key that isn't already normalized to its
+// canonical form, scanning every table that keys by spurl. affected_package is
+// deliberately not scanned: it can be an arbitrary advisory purl (possibly
+// versioned), so we only re-point the exact legacy keys found in the key columns.
+func legacyFolds(ctx context.Context, db *sql.DB) (map[string]string, error) {
+	folds := map[string]string{}
+	queries := []string{
+		`SELECT spurl FROM components`,
+		`SELECT DISTINCT spurl FROM cpes`,
+		`SELECT spurl FROM missed_cpes`,
+		`SELECT DISTINCT query_key FROM package_vuln WHERE source = ?`,
+	}
+	for _, q := range queries {
+		rows, err := db.QueryContext(ctx, q, collect.SourceEcosystems)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if c := canonicalSPURL(key); c != "" && c != key {
+				folds[key] = c
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return folds, nil
+}
+
+// foldKey moves one legacy key to its canonical form across every table. Rows
+// that would collide with an already-canonical row are dropped (the canonical
+// row wins); the rest are renamed.
+func foldKey(ctx context.Context, tx *sql.Tx, legacy, canonical string) error {
+	steps := []struct{ drop, rename string }{
+		// components / missed_cpes: the key alone is the PK.
+		{`DELETE FROM components WHERE spurl = ? AND EXISTS (SELECT 1 FROM components WHERE spurl = ?)`,
+			`UPDATE components SET spurl = ? WHERE spurl = ?`},
+		{`DELETE FROM missed_cpes WHERE spurl = ? AND EXISTS (SELECT 1 FROM missed_cpes WHERE spurl = ?)`,
+			`UPDATE missed_cpes SET spurl = ? WHERE spurl = ?`},
+		// cpes: PK is (spurl, cpe) — collisions are per-cpe.
+		{`DELETE FROM cpes WHERE spurl = ? AND cpe IN (SELECT cpe FROM cpes WHERE spurl = ?)`,
+			`UPDATE cpes SET spurl = ? WHERE spurl = ?`},
+		// package_vuln eco rows are keyed by the spurl (query_key); PK adds original_id.
+		{`DELETE FROM package_vuln WHERE source = '` + collect.SourceEcosystems + `' AND query_key = ?
+		  AND original_id IN (SELECT original_id FROM package_vuln WHERE source = '` + collect.SourceEcosystems + `' AND query_key = ?)`,
+			`UPDATE package_vuln SET query_key = ? WHERE source = '` + collect.SourceEcosystems + `' AND query_key = ?`},
+	}
+	for _, s := range steps {
+		if _, err := tx.ExecContext(ctx, s.drop, legacy, canonical); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, s.rename, canonical, legacy); err != nil {
+			return err
+		}
+	}
+	// affected_package is a plain column (no key): re-point exact legacy matches.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE package_vuln SET affected_package = ? WHERE affected_package = ?`, canonical, legacy); err != nil {
+		return err
+	}
+	return nil
+}
+
+// canonicalSPURL returns the normalized storage key for a spurl, or "" if it
+// can't be parsed. purl.Strip is idempotent, so an already-canonical key maps to
+// itself.
+func canonicalSPURL(spurl string) string {
+	p, err := purl.Parse(spurl)
+	if err != nil {
+		return ""
+	}
+	return purl.Strip(p)
 }
 
 func (s *Store) Close() error {
@@ -141,10 +263,11 @@ func (s *Store) Metrics(ctx context.Context, staleBefore time.Time) (collect.Met
 		arg   any
 	}{
 		{&m.Components, `SELECT COUNT(*) FROM components`, nil},
-		// Distinct logical vulnerabilities (one per canonical CVE), matching the
-		// collapsed total on /vulnerabilities — not raw per-source advisory rows.
-		// Mirrors QueryVulns' collapse key (canonical_id, else original_id).
-		{&m.Vulns, `SELECT COUNT(*) FROM (SELECT 1` + vulnJoin + ` GROUP BY COALESCE(NULLIF(v.canonical_id, ''), pv.original_id))`, nil},
+		// Distinct logical vulnerabilities affecting a package, matching the
+		// /vulnerabilities list exactly: QueryVulns' collapse groups by the
+		// canonical CVE (else original_id) and filters out the unattached per-CVE
+		// cache (empty affected_package).
+		{&m.Vulns, `SELECT COUNT(*) FROM (SELECT 1` + vulnJoin + ` WHERE pv.affected_package <> '' GROUP BY COALESCE(NULLIF(v.canonical_id, ''), pv.original_id))`, nil},
 		{&m.CPEs, `SELECT COUNT(*) FROM cpes`, nil},
 		{&m.ComponentsWithCPE, `SELECT COUNT(DISTINCT spurl) FROM cpes`, nil},
 		{&m.MissedCPEs, `SELECT COUNT(*) FROM missed_cpes`, nil},
@@ -404,6 +527,63 @@ func (s *Store) DeleteMissedCPE(ctx context.Context, spurl string) error {
 	return nil
 }
 
+// DeleteResult reports how many rows each delete removed.
+type DeleteResult struct {
+	Component int
+	CPEs      int
+	MissedCPE int
+	EcoVulns  int
+	OSVVulns  int
+}
+
+// DeleteComponent removes a package's package-specific cached rows: the
+// component, its resolved CPEs, its negative-cache marker, and the ecosyste.ms +
+// OSV vuln caches keyed to it (osvKey may be "" for types without an OSV query).
+// WHY: shared caches — the per-CPE/per-CVE NVD records and the dedup'd `vulns`
+// headers — are left intact, since other packages may still reference them.
+// All deletes run in one transaction.
+func (s *Store) DeleteComponent(ctx context.Context, spurl, osvKey string) (DeleteResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return DeleteResult{}, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	var r DeleteResult
+	del := func(dst *int, query string, args ...any) error {
+		res, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		*dst = int(n)
+		return nil
+	}
+
+	if err := del(&r.Component, `DELETE FROM components WHERE spurl = ?`, spurl); err != nil {
+		return DeleteResult{}, fmt.Errorf("delete component: %w", err)
+	}
+	if err := del(&r.CPEs, `DELETE FROM cpes WHERE spurl = ?`, spurl); err != nil {
+		return DeleteResult{}, fmt.Errorf("delete cpes: %w", err)
+	}
+	if err := del(&r.MissedCPE, `DELETE FROM missed_cpes WHERE spurl = ?`, spurl); err != nil {
+		return DeleteResult{}, fmt.Errorf("delete missed_cpes: %w", err)
+	}
+	if err := del(&r.EcoVulns, `DELETE FROM package_vuln WHERE source = ? AND query_key = ?`, collect.SourceEcosystems, spurl); err != nil {
+		return DeleteResult{}, fmt.Errorf("delete eco vulns: %w", err)
+	}
+	if osvKey != "" {
+		if err := del(&r.OSVVulns, `DELETE FROM package_vuln WHERE source = ? AND query_key = ?`, collect.SourceOSV, osvKey); err != nil {
+			return DeleteResult{}, fmt.Errorf("delete osv vulns: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return DeleteResult{}, fmt.Errorf("commit: %w", err)
+	}
+	return r, nil
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
@@ -646,6 +826,14 @@ func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.
 		conds = append(conds, "pv.source = ?")
 		args = append(args, q.Source)
 	}
+	if q.Collapse {
+		// WHY: the collapsed list shows vulns affecting known packages. CPER's
+		// raw per-CVE cache (query_key cve:…) lands in package_vuln with an empty
+		// affected_package — package-independent records that only bloat the
+		// scan/group. Real impacts (ecosyste.ms/OSV, NVD by-CPE) all stamp it, so
+		// excluding the empty ones shrinks the working set without losing data.
+		conds = append(conds, "pv.affected_package <> ''")
+	}
 	where := ""
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
@@ -653,21 +841,21 @@ func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.
 
 	// WHY: the same (source, original_id, matched_on) can live under several
 	// query_keys (the per-CVE and per-CPE NVD caches plus the package read
-	// key), so collapse by that triple — a by-id lookup must show each logical
-	// vuln-impact once. matched_on (the purl or CPE) is the stable identifier;
-	// affected_package can vary (empty in the raw per-CVE cache, the spurl in
-	// the package read). GROUP BY picks one row per group.
+	// key), so the detail path collapses by that triple — a by-id lookup must
+	// show each logical vuln-impact once. matched_on (the purl or CPE) is the
+	// stable identifier; affected_package can vary (empty in the raw per-CVE
+	// cache, the spurl in the package read). GROUP BY picks one row per group.
 	//
-	// Collapse instead groups by the logical vuln (canonical CVE, else
-	// original_id) so the global list shows each vuln once even when it affects
-	// several packages or arrives from several sources (osv ⊆ ecosyste.ms). The
-	// SELECT then uses MAX(v.score), which makes SQLite pull every other bare
-	// column from the highest-severity instance — the representative row.
-	const vulnKey = `COALESCE(NULLIF(v.canonical_id, ''), pv.original_id)`
+	// The list (Collapse) groups by the logical vuln — its canonical CVE, else
+	// its original_id — so each CVE shows once (its CVE/GHSA/PYSEC variants
+	// collapse into one row titled by the canonical). With MAX(v.score), SQLite
+	// pulls the other bare columns (score, dates, …) from the highest-severity
+	// instance — the representative row.
+	const advisoryKey = `COALESCE(NULLIF(v.canonical_id, ''), pv.original_id)`
 	cols := vulnCols
 	vulnGroupBy := ` GROUP BY pv.source, pv.original_id, pv.matched_on`
 	if q.Collapse {
-		vulnGroupBy = ` GROUP BY ` + vulnKey
+		vulnGroupBy = ` GROUP BY ` + advisoryKey
 		cols = strings.Replace(cols, "v.score,", "MAX(v.score),", 1)
 	}
 
@@ -691,18 +879,18 @@ func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.
 
 	// Deterministic order so pagination is stable. NULL scores/dates sort last
 	// under DESC (SQLite ranks NULL lowest). Collapse mode orders by aggregates
-	// (the group spans sources) and tiebreaks on the canonical key; the
+	// (the group spans packages) and tiebreaks on the advisory key; the
 	// non-collapsed path (detail) keeps its raw per-row order.
 	orderBy := " ORDER BY pv.fetched_at DESC, pv.source, pv.query_key, pv.original_id"
 	if q.Collapse {
-		orderBy = " ORDER BY MAX(pv.fetched_at) DESC, " + vulnKey
+		orderBy = " ORDER BY MAX(pv.fetched_at) DESC, " + advisoryKey
 		switch q.Order {
 		case "cvss":
-			orderBy = " ORDER BY MAX(v.score) DESC, " + vulnKey
+			orderBy = " ORDER BY MAX(v.score) DESC, " + advisoryKey
 		case "updated":
-			orderBy = " ORDER BY MAX(v.modified_at) DESC, " + vulnKey
+			orderBy = " ORDER BY MAX(v.modified_at) DESC, " + advisoryKey
 		case "created":
-			orderBy = " ORDER BY MAX(v.published_at) DESC, " + vulnKey
+			orderBy = " ORDER BY MAX(v.published_at) DESC, " + advisoryKey
 		}
 	}
 	rows, err := s.db.QueryContext(ctx,

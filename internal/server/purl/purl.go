@@ -43,15 +43,23 @@ func Parse(coord string) (PURL, error) {
 // the PURL namespace or distro= qualifier, not in the type. See `linuxByNamespace`
 // for the supported distros per type.
 func Strip(p PURL) string {
+	// WHY: for case-insensitive ecosystems (crates.io, npm, …) pkg:cargo/Deno
+	// and pkg:cargo/deno are the same package; fold the key so they don't
+	// produce duplicate rows. Case-sensitive types keep their case.
+	ns, name := p.Namespace, p.Name
+	if foldsCase(p.Type) {
+		ns, name = strings.ToLower(ns), strings.ToLower(name)
+	}
+
 	var b strings.Builder
 	b.WriteString("pkg:")
 	b.WriteString(p.Type)
-	if p.Namespace != "" {
+	if ns != "" {
 		b.WriteByte('/')
-		b.WriteString(p.Namespace)
+		b.WriteString(ns)
 	}
 	b.WriteByte('/')
-	b.WriteString(p.Name)
+	b.WriteString(name)
 
 	if isLinuxType(p.Type) {
 		q := map[string]string{}
@@ -83,6 +91,19 @@ func Strip(p PURL) string {
 func isLinuxType(t string) bool {
 	switch t {
 	case "deb", "rpm", "apk":
+		return true
+	}
+	return false
+}
+
+// foldsCase reports whether a purl type's namespace/name are case-insensitive,
+// so Strip lowercases them for the storage key. Conservative allowlist: a wrong
+// fold would collapse distinct packages, so case-sensitive types (maven,
+// golang, gem, generic, …) are deliberately left out.
+func foldsCase(t string) bool {
+	switch t {
+	case "cargo", "pypi", "npm", "deb", "rpm", "apk",
+		"github", "bitbucket", "hex", "nuget", "composer":
 		return true
 	}
 	return false

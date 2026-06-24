@@ -45,7 +45,9 @@ func TestFetchCVE(t *testing.T) {
 	assert.True(t, hasMatch, "expected at least one record with a non-empty MatchedOn")
 }
 
-func TestFetchCVENotFound(t *testing.T) {
+// An empty data array (CVE not in VulnCheck's NVD2 index) is not an error —
+// it means "no NVD2 data for this CVE", so CPER must not treat it as a failure.
+func TestFetchCVEEmptyIsNotError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"data":[]}`))
@@ -53,7 +55,7 @@ func TestFetchCVENotFound(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL)
-	_, err := c.FetchCVE(context.Background(), "CVE-2026-00000")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	recs, err := c.FetchCVE(context.Background(), "CVE-2026-00000")
+	require.NoError(t, err)
+	assert.Empty(t, recs)
 }

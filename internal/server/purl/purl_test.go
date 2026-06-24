@@ -45,6 +45,28 @@ func TestStripNamespaced(t *testing.T) {
 	assert.Equal(t, "pkg:npm/@scope/foo", Strip(p))
 }
 
+// TestStripFoldsCase: case-insensitive ecosystems fold the key so casing
+// variants don't duplicate; case-sensitive types keep their case.
+func TestStripFoldsCase(t *testing.T) {
+	folded := map[string]string{
+		"pkg:cargo/Deno@1.0.0":        "pkg:cargo/deno",
+		"pkg:cargo/deno@2.0.0":        "pkg:cargo/deno",
+		"pkg:npm/React@18":            "pkg:npm/react",
+		"pkg:pypi/Django@5":           "pkg:pypi/django",
+		"pkg:github/OctoCat/Hello@v1": "pkg:github/octocat/hello",
+	}
+	for in, want := range folded {
+		p, err := Parse(in)
+		require.NoError(t, err, in)
+		assert.Equal(t, want, Strip(p), in)
+	}
+
+	// maven is case-sensitive and not in the allowlist: Strip must preserve it.
+	p, err := Parse("pkg:maven/com.Example/MyLib@1")
+	require.NoError(t, err)
+	assert.Equal(t, "pkg:maven/com.Example/MyLib", Strip(p))
+}
+
 func TestStripGitHub(t *testing.T) {
 	p, _ := Parse("pkg:github/octocat/hello-world@v1")
 	assert.Equal(t, "pkg:github/octocat/hello-world", Strip(p))

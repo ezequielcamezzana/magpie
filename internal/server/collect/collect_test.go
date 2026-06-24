@@ -160,8 +160,9 @@ func TestCollectNVDBudgetTimeout(t *testing.T) {
 		OSVFetcher:        stubOSV{},
 		SourceBudget:      20 * time.Millisecond,
 		// A CPER that hangs until the budget fires.
-		CPER: func(ctx context.Context, _ Config, _ purl.Identity, _, _ string, _ []VulnRecord, _ time.Time) {
+		CPER: func(ctx context.Context, _ Config, _ purl.Identity, _, _ string, _ []VulnRecord, _ time.Time) []SourceError {
 			<-ctx.Done()
+			return nil
 		},
 	}
 
@@ -170,11 +171,11 @@ func TestCollectNVDBudgetTimeout(t *testing.T) {
 
 	var timedOut bool
 	for _, e := range res.Errors {
-		if e.Source == SourceCPER && e.Kind == "timeout" {
+		if e.Source == SourceVulnCheck && e.Kind == "timeout" {
 			timedOut = true
 		}
 	}
-	assert.True(t, timedOut, "want a non-fatal cper timeout error")
+	assert.True(t, timedOut, "want a non-fatal vulncheck (cper) timeout error")
 	assert.NotEmpty(t, res.Groups, "eco/OSV vulns must survive the NVD/CPER timeout")
 }
 
@@ -182,6 +183,27 @@ func TestCollectInvalidCoord(t *testing.T) {
 	res, err := Collect(context.Background(), "not-a-purl", testConfig(newFakeStore(), &stubFetcher{}, stubOSV{}))
 	require.Error(t, err)
 	assert.Nil(t, res)
+}
+
+func TestStaleMessage(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   error
+		stale bool
+		want  string
+	}{
+		{"4xx", &HTTPError{Status: 404}, false, "osv not able to process the data"},
+		{"4xx stale", &HTTPError{Status: 429}, true, "osv not able to process the data, returning stale data"},
+		{"5xx", &HTTPError{Status: 503}, false, "osv is not available"},
+		{"5xx stale", &HTTPError{Status: 500}, true, "osv is not available, returning stale data"},
+		{"transport", &HTTPError{Err: errors.New("conn refused")}, false, "osv is not available"},
+		{"nil err stale", nil, true, "osv is not available, returning stale data"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, StaleMessage("osv", tc.err, tc.stale))
+		})
+	}
 }
 
 func TestCollectNilFetchers(t *testing.T) {

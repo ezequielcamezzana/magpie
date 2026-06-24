@@ -3,6 +3,7 @@ package collect
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -145,7 +146,44 @@ const (
 	SourceOSV        = "osv"
 	SourceCPER       = "cper"
 	SourceNVD        = "nvd"
+	SourceVulnCheck  = "vulncheck"
 )
+
+// HTTPError carries the upstream HTTP status so callers can normalize the
+// SourceError message. Status 0 means no response (transport failure / timeout).
+type HTTPError struct {
+	Status int
+	Err    error
+}
+
+func (e *HTTPError) Error() string {
+	if e.Status == 0 {
+		if e.Err != nil {
+			return e.Err.Error()
+		}
+		return "no response"
+	}
+	return fmt.Sprintf("http status %d", e.Status)
+}
+
+func (e *HTTPError) Unwrap() error { return e.Err }
+
+// StaleMessage builds the normalized SourceError message for a failed fetch:
+// a 4xx status means the source rejected the request ("not able to process the
+// data"); anything else (5xx, transport failure, timeout) means the source was
+// unreachable ("is not available"). When cached data was still served, the
+// message says so.
+func StaleMessage(source string, err error, servedStale bool) string {
+	msg := source + " is not available"
+	var he *HTTPError
+	if errors.As(err, &he) && he.Status >= 400 && he.Status < 500 {
+		msg = source + " not able to process the data"
+	}
+	if servedStale {
+		msg += ", returning stale data"
+	}
+	return msg
+}
 
 const (
 	ReasonNoVersionSpecified       = "no_version_specified"

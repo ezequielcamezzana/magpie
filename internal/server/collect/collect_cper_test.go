@@ -60,9 +60,10 @@ func TestCollectAssemblesStages(t *testing.T) {
 	cfg.MaxAge = UniformMaxAge(24 * time.Hour)
 
 	// Stage 3 stub: just resolve the CPE (the real §3a logic is tested in cper).
-	cfg.CPER = func(ctx context.Context, cfg Config, _ purl.Identity, sp, _ string, records []VulnRecord, _ time.Time) {
+	cfg.CPER = func(ctx context.Context, cfg Config, _ purl.Identity, sp, _ string, records []VulnRecord, _ time.Time) []SourceError {
 		assert.NotEmpty(t, records, "stage 3: want the assembled records")
 		_ = cfg.Store.PutCPEs(ctx, sp, []ResolvedCPE{{CPE: cpe, CVE: "CVE-2021-23337"}})
+		return nil
 	}
 
 	// Stage 4: NVD returns the CVE affecting that CPE (MatchedOn = the CPE; the

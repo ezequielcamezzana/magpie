@@ -61,10 +61,10 @@ func getVulns(t *testing.T, srv *httptest.Server, query string) (*http.Response,
 func TestVulnsFilterByOriginalID(t *testing.T) {
 	srv := newVulnsServer(t, func(t *testing.T, db collect.Store) {
 		require.NoError(t, db.PutVulns(context.Background(), "ecosyste.ms", "k1", []collect.VulnRecord{
-			{OriginalID: "GHSA-abc", CanonicalID: "CVE-2024-1", Source: "ecosyste.ms", FetchedAt: time.Now()},
+			{OriginalID: "GHSA-abc", CanonicalID: "CVE-2024-1", Source: "ecosyste.ms", AffectedPackage: "pkg:npm/x", FetchedAt: time.Now()},
 		}))
 		require.NoError(t, db.PutVulns(context.Background(), "osv", "k2", []collect.VulnRecord{
-			{OriginalID: "CVE-2024-1", CanonicalID: "CVE-2024-1", Source: "osv", FetchedAt: time.Now()},
+			{OriginalID: "CVE-2024-1", CanonicalID: "CVE-2024-1", Source: "osv", AffectedPackage: "pkg:npm/x", FetchedAt: time.Now()},
 		}))
 	})
 
@@ -78,15 +78,15 @@ func TestVulnsFilterByOriginalID(t *testing.T) {
 func TestVulnsFilterByCanonicalID(t *testing.T) {
 	srv := newVulnsServer(t, func(t *testing.T, db collect.Store) {
 		require.NoError(t, db.PutVulns(context.Background(), "ecosyste.ms", "k1", []collect.VulnRecord{
-			{OriginalID: "GHSA-abc", CanonicalID: "CVE-2024-1", Source: "ecosyste.ms", FetchedAt: time.Now()},
+			{OriginalID: "GHSA-abc", CanonicalID: "CVE-2024-1", Source: "ecosyste.ms", AffectedPackage: "pkg:npm/x", FetchedAt: time.Now()},
 		}))
 		require.NoError(t, db.PutVulns(context.Background(), "osv", "k2", []collect.VulnRecord{
-			{OriginalID: "CVE-2024-1", CanonicalID: "CVE-2024-1", Source: "osv", FetchedAt: time.Now()},
+			{OriginalID: "CVE-2024-1", CanonicalID: "CVE-2024-1", Source: "osv", AffectedPackage: "pkg:npm/x", FetchedAt: time.Now()},
 		}))
 	})
 
 	// GHSA-abc (ecosyste.ms) and CVE-2024-1 (osv) share canonical CVE-2024-1:
-	// the list collapses them into a single logical vuln.
+	// the list collapses them into one logical vuln, titled by the canonical.
 	resp, out := getVulns(t, srv, "?id=CVE-2024-1")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 1, out.Total)
@@ -101,10 +101,11 @@ func TestVulnsPagination(t *testing.T) {
 		var recs []collect.VulnRecord
 		for i := 0; i < n; i++ {
 			recs = append(recs, collect.VulnRecord{
-				OriginalID:  "OSV-" + string(rune('a'+i)),
-				CanonicalID: "OSV-" + string(rune('a'+i)),
-				Source:      "osv",
-				FetchedAt:   base.Add(time.Duration(i) * time.Second),
+				OriginalID:      "OSV-" + string(rune('a'+i)),
+				CanonicalID:     "OSV-" + string(rune('a'+i)),
+				Source:          "osv",
+				AffectedPackage: "pkg:npm/x",
+				FetchedAt:       base.Add(time.Duration(i) * time.Second),
 			})
 		}
 		require.NoError(t, db.PutVulns(context.Background(), "osv", "k", recs))

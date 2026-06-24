@@ -8,6 +8,7 @@ package cper
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"sort"
 	"strings"
@@ -35,11 +36,11 @@ const maxConcurrentFetches = 3
 const perRequestTimeout = 8 * time.Second
 
 // Stage adapts Run to collect.CPERStage, using cfg.CVEFetcher.
-func Stage(ctx context.Context, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) {
+func Stage(ctx context.Context, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) []collect.SourceError {
 	if cfg.CVEFetcher == nil {
-		return
+		return nil
 	}
-	Run(ctx, cfg.CVEFetcher, cfg, id, spurl, repoURL, records, now)
+	return Run(ctx, cfg.CVEFetcher, cfg, id, spurl, repoURL, records, now)
 }
 
 // Run resolves the package's CPE(s) by cross-checking the candidate CVEs
@@ -51,30 +52,30 @@ func Stage(ctx context.Context, cfg collect.Config, id purl.Identity, spurl, rep
 //
 // Caches: fresh CPEs (GetCPEs vs MaxAge) short-circuit everything; otherwise
 // each candidate CVE is read from the per-CVE cache or fetched from NVD.
-func Run(ctx context.Context, fetcher collect.CVEFetcher, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) {
+func Run(ctx context.Context, fetcher collect.CVEFetcher, cfg collect.Config, id purl.Identity, spurl, repoURL string, records []collect.VulnRecord, now time.Time) []collect.SourceError {
 	if fetcher == nil {
-		return // CPER disabled when no CVE fetcher wired
+		return nil // CPER disabled when no CVE fetcher wired
 	}
 	// WHY: NVD-by-CPE is backport-unaware. A distro purl points to a build with
 	// backported fixes, but NVD's ranges/CPEs describe the upstream → it would
 	// flag an already-fixed package as affected (false positive). For distros
 	// the authoritative source is OSV.
 	if id.Kind == purl.KindLinux {
-		return
+		return nil
 	}
 	if cached, _ := cfg.Store.GetCPEs(ctx, spurl); cached.Found && collect.IsFresh(cached.FetchedAt, cfg.MaxAge.CPEs, now) {
-		return // fresh CPEs: don't touch NVD
+		return nil // fresh CPEs: don't touch NVD
 	}
 	// WHY: a recent search that found no CPE is cached too (negative cache), so
 	// CPE-less packages don't re-hit NVD on every request. Expires with MaxAge,
 	// then we retry in case NVD analyzed the package's CVEs since.
 	if missed, _ := cfg.Store.GetMissedCPE(ctx, spurl); missed.Found && collect.IsFresh(missed.FetchedAt, cfg.MaxAge.MissedCPE, now) {
-		return
+		return nil
 	}
 
 	cves, rangesByCVE := canonicalCVEs(records)
 	if len(cves) == 0 {
-		return
+		return nil
 	}
 	cves = newestAndOldest(cves, maxLookups)
 
@@ -106,17 +107,22 @@ func Run(ctx context.Context, fetcher collect.CVEFetcher, cfg collect.Config, id
 	var resolved []collect.ResolvedCPE
 	seen := map[string]bool{} // dedups CPEs repeated across CVEs
 	anyFailed := false
+	var fetchErr error // first fetch error, for the SourceError message
+	servedStale := false
 
 	for _, fc := range fetched {
-		// A failed fetch (NVD hung or errored) returns no records and didn't
-		// come from cache. It tells us nothing — and it must block the negative
-		// cache below, so an NVD outage isn't mistaken for "no CPE".
-		if !fc.fromNet && len(fc.recs) == 0 {
+		// A failed fetch (VulnCheck hung/errored) blocks the negative cache below,
+		// so an outage isn't mistaken for "no CPE". If stale records were served
+		// for it (fc.recs non-empty), they're still used for resolution.
+		if fc.failed {
 			anyFailed = true
-			continue
+			if fetchErr == nil {
+				fetchErr = fc.err
+			}
+			servedStale = servedStale || fc.stale
 		}
-		// Fetched fine but empty: NVD hasn't analyzed this CVE yet (no CPE
-		// configuration). Nothing to match.
+		// No records: either the fetch failed with no cache, or VulnCheck has no
+		// CPE configuration for this CVE yet. Nothing to match.
 		if len(fc.recs) == 0 {
 			continue
 		}
@@ -126,28 +132,44 @@ func Run(ctx context.Context, fetcher collect.CVEFetcher, cfg collect.Config, id
 		resolved = append(resolved, accepted...)
 	}
 
+	// A failed VulnCheck fetch is surfaced as a non-fatal SourceError; stale
+	// per-CVE records were still used for resolution when available.
+	var errs []collect.SourceError
+	if fetchErr != nil {
+		errs = append(errs, collect.SourceError{
+			Source: collect.SourceVulnCheck,
+			Kind:   "other",
+			Err:    errors.New(collect.StaleMessage(collect.SourceVulnCheck, fetchErr, servedStale)),
+		})
+	}
+
 	// WHY: never persist an empty set — a run that resolved nothing must not
 	// wipe previously resolved CPEs.
 	if len(resolved) > 0 {
 		_ = cfg.Store.PutCPEs(wctx, spurl, resolved)
 		_ = cfg.Store.DeleteMissedCPE(wctx, spurl)
-		return
+		return errs
 	}
 	// Record a miss (negative cache) only when every candidate was consulted
-	// without error — a real "NVD has no CPE for this package". If any fetch
-	// failed (NVD down/hung, or the budget cancelled it mid-flight), we learned
+	// without error — a real "no CPE for this package". If any fetch failed
+	// (source down/hung, or the budget cancelled it mid-flight), we learned
 	// nothing; a miss would freeze the package CPE-less until it expires.
 	if !anyFailed {
 		_ = cfg.Store.PutMissedCPE(wctx, spurl)
 	}
+	return errs
 }
 
-// fetchedCVE pairs a CVE with its NVD records and whether they came from the
-// network (and so still need writing to the per-CVE cache).
+// fetchedCVE pairs a CVE with its NVD records and how they were obtained:
+// fromNet (freshly fetched, needs caching), failed (the fetch errored), and
+// stale (records served from a stale cache after a failed fetch).
 type fetchedCVE struct {
 	cve     string
 	recs    []collect.VulnRecord
 	fromNet bool
+	failed  bool
+	stale   bool
+	err     error
 }
 
 // fetchCVERecords resolves each CVE's NVD records concurrently, cache-first,
@@ -172,18 +194,23 @@ func fetchCVERecords(ctx context.Context, fetcher collect.CVEFetcher, st collect
 }
 
 // fetchOneCVE returns a CVE's NVD records from the per-CVE cache when fresh,
-// otherwise from NVD (stamped now, flagged fromNet so the caller caches them).
-// Best-effort: a failed fetch yields no records, not an error.
+// otherwise from VulnCheck (stamped now, flagged fromNet so the caller caches
+// them). On a failed fetch it falls back to the stale cache when present (still
+// usable for CPE resolution) and records the error so Run can surface it.
 func fetchOneCVE(ctx context.Context, fetcher collect.CVEFetcher, st collect.Store, cve string, maxAge time.Duration, now time.Time) fetchedCVE {
 	key := collect.NVDCVEKey(cve)
-	if cached, _ := st.GetVulns(ctx, collect.SourceNVD, key); cached.Found && collect.IsFresh(cached.FetchedAt, maxAge, now) {
+	cached, _ := st.GetVulns(ctx, collect.SourceNVD, key)
+	if cached.Found && collect.IsFresh(cached.FetchedAt, maxAge, now) {
 		return fetchedCVE{cve: cve, recs: cached.Value}
 	}
 	rctx, cancel := context.WithTimeout(ctx, perRequestTimeout)
 	defer cancel()
 	recs, err := fetcher.FetchCVE(rctx, cve)
 	if err != nil {
-		return fetchedCVE{cve: cve}
+		if cached.Found {
+			return fetchedCVE{cve: cve, recs: cached.Value, failed: true, stale: true, err: err}
+		}
+		return fetchedCVE{cve: cve, failed: true, err: err}
 	}
 	for i := range recs {
 		recs[i].FetchedAt = now
@@ -208,7 +235,7 @@ func acceptCPEs(records []collect.VulnRecord, cve string, names, vendors, osvRan
 			continue
 		}
 		short := collect.ShortCPE(m.MatchedOn)
-		productMatch := nameSet[strings.ToLower(product)]
+		productMatch := nameSet[strings.ToLower(product)] || nameSet[normID(product)]
 		vendorMatch := vendorMatches(vendor, vendorSet)
 		ecoMatch := wantSw != "" && targetSw != "" &&
 			strings.EqualFold(targetSw, wantSw)
@@ -268,21 +295,38 @@ func acceptCPEs(records []collect.VulnRecord, cve string, names, vendors, osvRan
 	return out
 }
 
-// vendorMatches reports whether the NVD vendor matches a candidate — either
-// exactly, or by one of its '-'/'_'/'.'-separated tokens, so "apache-tomcat"
-// matches the candidate "apache". (CPE 2.3 components are already lowercase.)
+// vendorMatches reports whether the NVD vendor matches a candidate — either as
+// a whole (separator-insensitive, so "7-zip" matches "7zip"), or by one of its
+// '-'/'_'/'.'-separated tokens, so "apache-tomcat" matches the candidate
+// "apache".
 func vendorMatches(vendor string, vendorSet map[string]bool) bool {
-	if vendorSet[strings.ToLower(vendor)] {
+	if vendorSet[strings.ToLower(vendor)] || vendorSet[normID(vendor)] {
 		return true
 	}
-	for _, tok := range strings.FieldsFunc(vendor, func(r rune) bool {
-		return r == '-' || r == '_' || r == '.'
-	}) {
-		if vendorSet[strings.ToLower(tok)] {
+	for _, tok := range strings.FieldsFunc(vendor, isIDSeparator) {
+		if vendorSet[strings.ToLower(tok)] || vendorSet[normID(tok)] {
 			return true
 		}
 	}
 	return false
+}
+
+func isIDSeparator(r rune) bool {
+	return r == '-' || r == '_' || r == '.'
+}
+
+// normID lowercases an identifier and collapses its '-'/'_'/'.' separators, so
+// "7-zip", "7_zip" and "7zip" compare equal. WHY: NVD products/vendors and purl
+// names spell the same project with different separators; an exact compare
+// misses them. Used both to build the candidate sets and to look CPE parts up.
+func normID(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if !isIDSeparator(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // canonicalCVEs extracts the canonical CVEs from the records (deduplicated)
@@ -394,11 +438,16 @@ func ownerNameFromURL(repoURL string) (owner, name string) {
 	return parts[0], strings.TrimSuffix(parts[1], ".git")
 }
 
+// lowerSet builds the lookup set for a candidate list, holding BOTH the plain
+// lowercased form and the separator-collapsed normID form of each candidate.
+// Keeping both means a separator-insensitive match never costs an exact one
+// (e.g. "node.js" still matches as-is, while "7zip" also matches "7-zip").
 func lowerSet(xs []string) map[string]bool {
-	out := make(map[string]bool, len(xs))
+	out := make(map[string]bool, 2*len(xs))
 	for _, x := range xs {
 		if s := strings.ToLower(strings.TrimSpace(x)); s != "" {
 			out[s] = true
+			out[normID(s)] = true
 		}
 	}
 	return out

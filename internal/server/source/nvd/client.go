@@ -82,6 +82,7 @@ func (c *Client) QueryCPE(ctx context.Context, cpe string) ([]collect.VulnRecord
 
 func (c *Client) fetch(ctx context.Context, rawURL string, out any) error {
 	const maxRetries = 3
+	lastStatus := 0 // remembers the retried status (429/5xx) for the final error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			if err := sleepCtx(ctx, c.delay); err != nil {
@@ -103,10 +104,11 @@ func (c *Client) fetch(ctx context.Context, rawURL string, out any) error {
 		// c.httpc — see internal/server/health.
 		resp, err := c.httpc.Do(req)
 		if err != nil {
-			return err
+			return &collect.HTTPError{Err: err}
 		}
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		lastStatus = resp.StatusCode
 
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests:
@@ -128,14 +130,14 @@ func (c *Client) fetch(ctx context.Context, rawURL string, out any) error {
 			}
 			continue
 		case resp.StatusCode != http.StatusOK:
-			return fmt.Errorf("nvd: unexpected status %d", resp.StatusCode)
+			return &collect.HTTPError{Status: resp.StatusCode}
 		}
 		if readErr != nil {
-			return fmt.Errorf("nvd: read body: %w", readErr)
+			return &collect.HTTPError{Err: fmt.Errorf("nvd: read body: %w", readErr)}
 		}
 		return json.Unmarshal(body, out)
 	}
-	return fmt.Errorf("nvd: max retries exceeded")
+	return &collect.HTTPError{Status: lastStatus}
 }
 
 // sleepCtx waits for d or until ctx is cancelled, returning ctx.Err() if the

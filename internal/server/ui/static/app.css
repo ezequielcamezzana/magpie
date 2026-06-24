@@ -119,14 +119,20 @@ main {
 }
 .cmp-body {
     margin-top: auto;
+    min-width: 0;
 }
+/* Name cropped to one line (ellipsis) so the card height never changes with the
+   package name length. Full name on hover (title); full purl lives in the pill. */
 .cmp-name {
     font-family: var(--font-mono);
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--color-ink);
     line-height: 1.3;
-    word-break: break-word;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
 }
 .cmp-ver {
     font-family: var(--font-mono);
@@ -135,8 +141,14 @@ main {
     margin-top: 3px;
     overflow-wrap: anywhere;
 }
+.cmp-pills {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: auto;
+}
 .cmp-eco {
-    align-self: flex-start;
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--color-charcoal);
@@ -146,13 +158,51 @@ main {
     border-radius: var(--radius-full);
     white-space: nowrap;
 }
+/* purl pill — shows "pURL", reveals the full purl on hover (title) and copies
+   it to the clipboard on click. */
+.cmp-purl {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-charcoal);
+    background: var(--color-canvas);
+    border: 1px solid var(--color-hairline);
+    padding: 1px 8px 1px 6px;
+    border-radius: var(--radius-full);
+    white-space: nowrap;
+}
+.cmp-purl svg {
+    width: 12px;
+    height: 12px;
+}
+.cmp-purl:hover {
+    border-color: var(--color-hairline-strong);
+    color: var(--color-ink);
+}
+.cmp-purl.is-copied {
+    color: var(--color-ink);
+    border-color: var(--color-ink);
+}
 
 /* Advisory grid — responsive grid of compact .svc cards. */
 .vuln-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--space-md);
     margin-top: var(--space-lg);
+}
+@media (max-width: 900px) {
+    .vuln-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+@media (max-width: 600px) {
+    .vuln-list {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* ── CPE match card (/cpes index) ──────────────────────────────────────
@@ -176,7 +226,8 @@ main {
 .cpe-head { display: flex; align-items: center; gap: var(--space-md); }
 .cpe-glyph { display: inline-flex; color: var(--color-charcoal); flex: none; }
 .cpe-glyph svg { width: 18px; height: 18px; }
-.cpe-id { font-family: var(--font-mono); font-size: 15px; line-height: 1.3; min-width: 0; word-break: break-all; }
+/* Single line + ellipsis so a long CPE never wraps and grows the card height. */
+.cpe-id { font-family: var(--font-mono); font-size: 15px; line-height: 1.3; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cpe-id-prefix { color: var(--color-mute); }
 .cpe-id-main { color: var(--color-ink); font-weight: 600; }
 .cpe-id-sep { color: var(--color-mute); }
@@ -228,19 +279,27 @@ main {
 }
 .cpe-break-row.is-off .cpe-range { color: var(--color-charcoal); }
 /* footer meta */
+/* nowrap keeps the footer a single row (constant card height): the purl
+   ellipsizes instead of wrapping the CVE link onto a second line. */
 .cpe-foot {
-    display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap;
+    display: flex; align-items: center; gap: var(--space-md); flex-wrap: nowrap;
     margin-top: var(--space-lg); padding-top: var(--space-md);
     border-top: 1px solid var(--color-hairline);
 }
 .cpe-eco {
+    flex: 0 0 auto;
     font-family: var(--font-mono); font-size: 11px; color: var(--color-charcoal);
     background: var(--color-surface-soft); border: 1px solid var(--color-hairline);
     padding: 2px 9px; border-radius: var(--radius-full);
 }
-.cpe-purl { font-family: var(--font-mono); font-size: 12px; color: var(--color-mute); cursor: pointer; }
+/* min-width:0 lets a long purl shrink and ellipsize instead of pushing the CVE
+   link past the card edge; the CVE stays pinned right and never shrinks. */
+.cpe-purl {
+    font-family: var(--font-mono); font-size: 12px; color: var(--color-mute); cursor: pointer;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .cpe-purl:hover { color: var(--color-ink); }
-.cpe-cve { margin-left: auto; font-size: 13px; }
+.cpe-cve { margin-left: auto; font-size: 13px; flex: 0 0 auto; }
 @media (max-width: 560px) {
     .cpe-break-row { grid-template-columns: 1fr; gap: 2px; }
     .cpe-cve { margin-left: 0; }
@@ -254,34 +313,36 @@ main {
     background: var(--color-canvas);
     border: 1px solid var(--color-hairline);
     border-radius: var(--radius-lg);
-    padding: var(--space-xl);
+    padding: var(--space-lg);
 }
 
+/* Compact card: [id — score] on one row, dates stacked below. */
 .svc-top {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: var(--space-lg);
-    flex-wrap: wrap;
+    gap: var(--space-md);
+    flex-wrap: nowrap;
 }
-/* id on top, alias (CVE) stacked below — keeps the title column narrow so the
-   score pill stays aligned top-right even when id+alias are long. */
 .svc-title-wrap {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 2px;
+    flex: 1;
     min-width: 0;
 }
 .svc-canonical {
     font-family: var(--font-mono);
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 600;
     line-height: 1.2;
     color: var(--color-ink);
     letter-spacing: -0.01em;
     white-space: nowrap;
-    flex: 0 0 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
 }
 .svc-paren {
     font-family: var(--font-mono);
@@ -289,12 +350,12 @@ main {
     color: var(--color-mute);
 }
 
-/* score pill + source pill, right-aligned */
+/* score pill, right-aligned */
 .svc-scores {
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-    flex-wrap: wrap;
+    flex: none;
     justify-content: flex-end;
 }
 .svc-src-pill {
@@ -385,11 +446,12 @@ main {
 }
 
 /* published / updated dates */
+/* dates stacked one per line: pub / upd */
 .svc-dates {
     display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
     margin-top: var(--space-md);
     font-family: var(--font-mono);
     font-size: 12px;
@@ -397,12 +459,13 @@ main {
 }
 .svc-dlabel {
     color: var(--color-mute);
+    margin-right: 4px;
 }
 .svc-rel {
     color: var(--color-mute);
 }
 .svc-ddot {
-    color: var(--color-hairline-strong);
+    display: none;
 }
 
 /* clickable advisory card → vuln detail page */
@@ -821,6 +884,26 @@ main {
     border: 1px solid var(--color-hairline);
     border-radius: var(--radius-lg);
     padding: var(--space-lg);
+    display: flex;
+    gap: var(--space-section);
+    flex-wrap: wrap;
+}
+.pkg-repo-main {
+    flex: 1 1 260px;
+    min-width: 0;
+}
+/* Package description (ecosyste.ms "About") in the empty right column. */
+.pkg-repo-desc {
+    flex: 1 1 240px;
+    min-width: 0;
+    padding-left: var(--space-section);
+    border-left: 1px solid var(--color-hairline);
+}
+.pkg-repo-desc p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--color-charcoal);
 }
 .pkg-repo-label {
     display: flex;

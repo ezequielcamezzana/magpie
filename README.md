@@ -93,6 +93,14 @@ Common `make` targets:
 | `make tidy` | Tidy `go.mod` / `go.sum` |
 | `make ui-sync` | Copy the shared design system into the embedded UI assets |
 
+## Documentation
+
+- [How magpie works](docs/architecture.md) — the collect pipeline, caching, and package layout.
+
+## Contributing
+
+Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). For security issues, **do not** open a public issue; see [SECURITY.md](SECURITY.md).
+
 ## Contact
 
 Questions, feedback, or issues — email **ezequielcamezzana@gmail.com**.

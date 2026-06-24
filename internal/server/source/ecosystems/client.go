@@ -6,7 +6,6 @@ package ecosystems
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -21,9 +20,6 @@ const (
 	defaultBaseURL = "https://packages.ecosyste.ms/api/v1/registries/"
 	userAgent      = "Magpie/0.1.0"
 )
-
-// ErrNotFound is returned for HTTP 404 (package unknown to ecosyste.ms).
-var ErrNotFound = errors.New("ecosystems: package not found")
 
 // registryByType maps a PURL type to its ecosyste.ms registry name. This table
 // is ecosyste.ms-specific knowledge and lives here, not in pkg/purl.
@@ -91,15 +87,12 @@ func (c *Client) Fetch(ctx context.Context, spurl string) (collect.Component, *c
 
 	resp, err := c.httpc.Do(req)
 	if err != nil {
-		return collect.Component{}, nil, nil, err
+		return collect.Component{}, nil, nil, &collect.HTTPError{Err: err}
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return collect.Component{}, nil, nil, ErrNotFound
-	}
 	if resp.StatusCode != http.StatusOK {
-		return collect.Component{}, nil, nil, fmt.Errorf("ecosystems: unexpected status %d", resp.StatusCode)
+		return collect.Component{}, nil, nil, &collect.HTTPError{Status: resp.StatusCode}
 	}
 
 	var raw rawPackage

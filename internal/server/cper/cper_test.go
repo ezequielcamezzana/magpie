@@ -72,6 +72,15 @@ func TestAcceptCPE_RejectsUnrelated(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+func TestAcceptCPE_SeparatorInsensitive(t *testing.T) {
+	// purl name/vendor "7zip" vs NVD CPE "7-zip": the separator must not block
+	// the name∧vendor acceptance (pkg:github.com/ip7z/7zip ↔ cpe:a:7-zip:7-zip).
+	recs := []collect.VulnRecord{nvdRec("7-zip", "7-zip", "", "[0, 24.08)")}
+	got := acceptOne(t, recs, []string{"7zip"}, []string{"7zip", "ip7z"}, nil, "", "")
+	require.Len(t, got, 1)
+	assert.Subset(t, got[0].MatchedBy, []string{"name", "vendor"})
+}
+
 func TestCandidatesFrom(t *testing.T) {
 	id := purl.Identity{Type: "npm", Name: "lodash"}
 	names, vendors := candidatesFrom(id, "https://github.com/lodash/lodash")
@@ -214,6 +223,39 @@ func TestRunResolvesCPE(t *testing.T) {
 	cached, _ := st.GetVulns(context.Background(), collect.SourceNVD, collect.NVDCVEKey("CVE-2021-23337"))
 	require.True(t, cached.Found)
 	require.Len(t, cached.Value, 1)
+}
+
+// TestRunServesStaleOnFetchError: when the VulnCheck fetch fails but a stale
+// per-CVE cache exists, CPER resolves from the stale records and surfaces a
+// non-fatal "vulncheck ... returning stale data" SourceError.
+func TestRunServesStaleOnFetchError(t *testing.T) {
+	st := newFakeStore()
+	spurl := "pkg:npm/lodash"
+	cfg := collect.Config{Store: st, MaxAge: collect.UniformMaxAge(24 * time.Hour)}
+
+	cve := "CVE-2021-23337"
+	records := []collect.VulnRecord{{OriginalID: cve, AffectedRanges: []string{"[*, 4.17.21)"}}}
+
+	// Stale per-CVE cache (fetched 72h ago > MaxAge) so the fetch is attempted.
+	stale := nvdRec("lodash", "lodash", "node.js", "[*, 4.17.21)")
+	stale.FetchedAt = time.Now().Add(-72 * time.Hour)
+	require.NoError(t, st.PutVulns(context.Background(), collect.SourceNVD,
+		collect.NVDCVEKey(cve), []collect.VulnRecord{stale}))
+
+	fetcher := &stubNVD{fail: true} // every FetchCVE errors
+
+	errs := Run(context.Background(), fetcher, cfg, identityFor(t, spurl),
+		spurl, "https://github.com/lodash/lodash", records, time.Now().UTC())
+
+	// Resolved from the stale cache despite the failure.
+	got, _ := st.GetCPEs(context.Background(), spurl)
+	require.True(t, got.Found, "want CPE resolved from stale cache")
+	assert.Equal(t, "cpe:2.3:a:lodash:lodash", got.Value[0].CPE)
+
+	// Non-fatal vulncheck error noting stale data was served.
+	require.Len(t, errs, 1)
+	assert.Equal(t, collect.SourceVulnCheck, errs[0].Source)
+	assert.Contains(t, errs[0].Err.Error(), "returning stale data")
 }
 
 // TestRunPerCVECacheSkipsRefetch: a second run with the per-CVE cache fresh

@@ -3,7 +3,6 @@ package collect
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"time"
 
@@ -42,8 +41,9 @@ type CVEFetcher interface {
 }
 
 // CPERStage is stage 3 (CPE resolution); cper.Stage satisfies it. Optional:
-// nil in Config skips the stage. Uses cfg.NVDFetcher.
-type CPERStage func(ctx context.Context, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time)
+// nil in Config skips the stage. Uses cfg.CVEFetcher. Returns non-fatal
+// SourceErrors (e.g. VulnCheck unreachable) for the result.
+type CPERStage func(ctx context.Context, cfg Config, id purl.Identity, spurl, repoURL string, records []VulnRecord, now time.Time) []SourceError
 
 // Collect orchestrates the collection pipeline for one coordinate: stage 1
 // (ecosyste.ms), stage 2 (OSV), then assembly + matching + roll-up.
@@ -95,11 +95,13 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 	}
 	if cfg.CPER != nil {
 		cctx, cancel := budgetCtx(ctx, cfg.SourceBudget)
-		cfg.CPER(cctx, cfg, identity, spurl, repoURL, allRecords, now)
+		cperErrs := cfg.CPER(cctx, cfg, identity, spurl, repoURL, allRecords, now)
 		// Only our budget firing (not the request being cancelled) is a
 		// "timed out" we report; the eco/OSV data already collected still ships.
 		if ctx.Err() == nil && cctx.Err() == context.DeadlineExceeded {
-			errs = append(errs, SourceError{Source: SourceCPER, Kind: "timeout", Err: errors.New("CPER timed out")})
+			errs = append(errs, SourceError{Source: SourceVulnCheck, Kind: "timeout", Err: errors.New(StaleMessage(SourceVulnCheck, nil, false))})
+		} else {
+			errs = append(errs, cperErrs...)
 		}
 		cancel()
 	}
@@ -115,7 +117,7 @@ func Collect(ctx context.Context, coord string, cfg Config) (*Result, error) {
 	nctx, cancel := budgetCtx(ctx, cfg.SourceBudget)
 	nvdErrs := runNVDByCPE(nctx, cfg, res.CPEs, spurl, cfg.MaxAge.Vulns, now)
 	if ctx.Err() == nil && nctx.Err() == context.DeadlineExceeded {
-		errs = append(errs, SourceError{Source: SourceNVD, Kind: "timeout", Err: errors.New("NVD vuln match timed out")})
+		errs = append(errs, SourceError{Source: SourceNVD, Kind: "timeout", Err: errors.New(StaleMessage(SourceNVD, nil, false))})
 	} else {
 		errs = append(errs, nvdErrs...)
 	}
@@ -244,10 +246,8 @@ func runOSV(ctx context.Context, fetcher OSVFetcher, st Store, q purl.OSVQuery, 
 	if err != nil {
 		// On failure/timeout the stale OSV vulns stay in the store and are
 		// picked up by the assembly step — warn but keep serving them.
-		if cached.Found {
-			return []SourceError{{Source: SourceOSV, Kind: errKind(timedOut), Err: errors.New("served cached data")}}
-		}
-		return []SourceError{{Source: SourceOSV, Kind: errKind(timedOut), Err: fmt.Errorf("osv query: %w", err)}}
+		msg := StaleMessage(SourceOSV, err, cached.Found)
+		return []SourceError{{Source: SourceOSV, Kind: errKind(timedOut), Err: errors.New(msg)}}
 	}
 
 	// WHY: stamping the canonical per-record before persisting populates the
@@ -309,12 +309,15 @@ func runNVDByCPE(ctx context.Context, cfg Config, cpes []ResolvedCPE, spurl stri
 	var errs []SourceError
 	for _, c := range cpes {
 		key := NVDCPEKey(c.CPE)
-		if cached, _ := cfg.Store.GetVulns(ctx, SourceNVD, key); cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
+		cached, _ := cfg.Store.GetVulns(ctx, SourceNVD, key)
+		if cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
 			continue // fresh: don't touch NVD
 		}
 		records, err := cfg.NVDFetcher.QueryCPE(ctx, c.CPE)
 		if err != nil {
-			errs = append(errs, SourceError{Source: SourceNVD, Kind: "other", Err: fmt.Errorf("nvd query cpe %q: %w", c.CPE, err)})
+			// A stale cache entry is still served by the assembly step.
+			msg := StaleMessage(SourceNVD, err, cached.Found)
+			errs = append(errs, SourceError{Source: SourceNVD, Kind: "other", Err: errors.New(msg)})
 			continue
 		}
 		for i := range records {
@@ -411,11 +414,11 @@ func collectStage1(ctx context.Context, fetcher EcosystemsFetcher, st Store, spu
 		// Live fetch failed or timed out. Serve the stale component if we have
 		// one (collect must stay fast), with a non-fatal warning; otherwise
 		// report the error and yield no component.
+		msg := StaleMessage(SourceEcosystems, err, cached.Found)
+		errs = append(errs, SourceError{Source: SourceEcosystems, Kind: errKind(timedOut), Err: errors.New(msg)})
 		if cached.Found {
-			errs = append(errs, SourceError{Source: SourceEcosystems, Kind: errKind(timedOut), Err: errors.New("served cached data")})
 			return cachedComponentResult(ctx, st, cached.Value), errs
 		}
-		errs = append(errs, SourceError{Source: SourceEcosystems, Kind: errKind(timedOut), Err: err})
 		return &Result{}, errs
 	}
 

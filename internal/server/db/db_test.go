@@ -33,10 +33,12 @@ func TestOpenCreatesTables(t *testing.T) {
 		require.NoError(t, err, "table %q not found", name)
 	}
 
-	var idx string
-	err := s.db.QueryRow(
-		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_vulns_canonical'`).Scan(&idx)
-	require.NoError(t, err, "idx_vulns_canonical not found")
+	for _, idx := range []string{"idx_vulns_canonical", "idx_vulns_original", "idx_package_vuln_source_oid"} {
+		var got string
+		err := s.db.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&got)
+		require.NoError(t, err, "index %q not found", idx)
+	}
 }
 
 func TestStaleComponents(t *testing.T) {
@@ -61,6 +63,112 @@ func TestStaleComponents(t *testing.T) {
 	got, err = s.StaleComponents(ctx, cutoff, 1)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"pkg:npm/oldest"}, got)
+}
+
+func TestFoldLegacyKeysComponents(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Legacy capital-case row beside the canonical lowercase row, plus a legacy
+	// row with no canonical sibling (must be renamed, not dropped).
+	require.NoError(t, s.PutComponent(ctx, collect.Component{SPURL: "pkg:cargo/Deno", Name: "old", FetchedAt: now.Add(-30 * time.Hour)}))
+	require.NoError(t, s.PutComponent(ctx, collect.Component{SPURL: "pkg:cargo/deno", Name: "new", FetchedAt: now}))
+	require.NoError(t, s.PutComponent(ctx, collect.Component{SPURL: "pkg:npm/React", Name: "react", FetchedAt: now}))
+
+	require.NoError(t, foldLegacyKeys(s.db))
+
+	all, _, err := s.QueryComponents(ctx, collect.ComponentQuery{Limit: 100})
+	require.NoError(t, err)
+	var spurls []string
+	for _, c := range all {
+		spurls = append(spurls, c.SPURL)
+	}
+	assert.ElementsMatch(t, []string{"pkg:cargo/deno", "pkg:npm/react"}, spurls)
+
+	// The canonical row won the collision: its metadata survived.
+	got, _ := s.GetComponent(ctx, "pkg:cargo/deno")
+	assert.Equal(t, "new", got.Value.Name)
+
+	// Idempotent: a second run changes nothing.
+	require.NoError(t, foldLegacyKeys(s.db))
+	all2, _, _ := s.QueryComponents(ctx, collect.ComponentQuery{Limit: 100})
+	assert.Len(t, all2, 2)
+}
+
+func TestFoldLegacyKeysSatellites(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	require.NoError(t, s.PutCPEs(ctx, "pkg:cargo/Deno", []collect.ResolvedCPE{{CPE: "cpe:2.3:a:deno:deno", CVE: "CVE-1"}}))
+	require.NoError(t, s.PutMissedCPE(ctx, "pkg:npm/React"))
+	require.NoError(t, s.PutVulns(ctx, collect.SourceEcosystems, "pkg:cargo/Deno", []collect.VulnRecord{
+		{OriginalID: "X-1", AffectedPackage: "pkg:cargo/Deno", FetchedAt: now},
+	}))
+
+	require.NoError(t, foldLegacyKeys(s.db))
+
+	cpes, err := s.GetCPEs(ctx, "pkg:cargo/deno")
+	require.NoError(t, err)
+	assert.True(t, cpes.Found, "cpes re-keyed to canonical")
+
+	miss, err := s.GetMissedCPE(ctx, "pkg:npm/react")
+	require.NoError(t, err)
+	assert.True(t, miss.Found, "missed_cpe re-keyed")
+
+	vulns, err := s.GetVulns(ctx, collect.SourceEcosystems, "pkg:cargo/deno")
+	require.NoError(t, err)
+	require.True(t, vulns.Found, "eco vulns re-keyed")
+	assert.Equal(t, "pkg:cargo/deno", vulns.Value[0].AffectedPackage, "affected_package re-pointed")
+
+	// Legacy keys are gone.
+	old, _ := s.GetCPEs(ctx, "pkg:cargo/Deno")
+	assert.False(t, old.Found)
+}
+
+func TestDeleteComponent(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	spurl := "pkg:npm/lodash"
+	osvKey := "npm:lodash"
+	rec := func(id string) collect.VulnRecord {
+		return collect.VulnRecord{OriginalID: id, CanonicalID: id, FetchedAt: now}
+	}
+
+	require.NoError(t, s.PutComponent(ctx, collect.Component{SPURL: spurl, Name: "lodash", FetchedAt: now}))
+	require.NoError(t, s.PutCPEs(ctx, spurl, []collect.ResolvedCPE{{CPE: "cpe:2.3:a:lodash:lodash", CVE: "CVE-2021-23337"}}))
+	require.NoError(t, s.PutMissedCPE(ctx, spurl))
+	require.NoError(t, s.PutVulns(ctx, "ecosyste.ms", spurl, []collect.VulnRecord{rec("GHSA-eco")}))
+	require.NoError(t, s.PutVulns(ctx, "osv", osvKey, []collect.VulnRecord{rec("GHSA-osv")}))
+	// Shared NVD per-CPE cache — other packages may resolve to the same CPE, so
+	// it must survive the delete.
+	require.NoError(t, s.PutVulns(ctx, "nvd", "nvd:cpe:2.3:a:lodash:lodash", []collect.VulnRecord{rec("CVE-2021-23337")}))
+
+	r, err := s.DeleteComponent(ctx, spurl, osvKey)
+	require.NoError(t, err)
+	assert.Equal(t, 1, r.Component)
+	assert.Equal(t, 1, r.CPEs)
+	assert.Equal(t, 1, r.MissedCPE)
+	assert.Equal(t, 1, r.EcoVulns)
+	assert.Equal(t, 1, r.OSVVulns)
+
+	// Package-specific rows are gone.
+	c, _ := s.GetComponent(ctx, spurl)
+	assert.False(t, c.Found, "component")
+	cp, _ := s.GetCPEs(ctx, spurl)
+	assert.False(t, cp.Found, "cpes")
+	m, _ := s.GetMissedCPE(ctx, spurl)
+	assert.False(t, m.Found, "missed_cpes")
+	eco, _ := s.GetVulns(ctx, "ecosyste.ms", spurl)
+	assert.False(t, eco.Found, "eco vulns")
+	osv, _ := s.GetVulns(ctx, "osv", osvKey)
+	assert.False(t, osv.Found, "osv vulns")
+
+	// Shared NVD cache survives.
+	nvd, _ := s.GetVulns(ctx, "nvd", "nvd:cpe:2.3:a:lodash:lodash")
+	assert.True(t, nvd.Found, "shared NVD cache must survive")
 }
 
 func TestMetrics(t *testing.T) {
@@ -461,6 +569,38 @@ func TestQueryVulnsEmptyID(t *testing.T) {
 	assert.Len(t, recs, 4)
 }
 
+// TestQueryVulnsCollapseExcludesUnattached: the collapsed list omits package_vuln
+// rows with an empty affected_package (CPER's raw per-CVE cache), while the
+// non-collapsed by-id read still returns them.
+func TestQueryVulnsCollapseExcludesUnattached(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Real impact: affected_package set.
+	require.NoError(t, s.PutVulns(ctx, "osv", "npm:lodash", []collect.VulnRecord{
+		{Source: "osv", OriginalID: "OSV-REAL", CanonicalID: "CVE-2021-1", AffectedPackage: "pkg:npm/lodash", FetchedAt: now},
+	}), "seed impact")
+	// CPER per-CVE cache row: empty affected_package.
+	require.NoError(t, s.PutVulns(ctx, "nvd", "cve:CVE-2021-9", []collect.VulnRecord{
+		{Source: "nvd", OriginalID: "CVE-2021-9", CanonicalID: "CVE-2021-9", AffectedPackage: "", FetchedAt: now},
+	}), "seed cache")
+
+	// Collapsed list: only the real impact.
+	recs, total, err := s.QueryVulns(ctx, collect.VulnQuery{Collapse: true, Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "collapsed list excludes the unattached cache row")
+	require.Len(t, recs, 1)
+	assert.Equal(t, "OSV-REAL", recs[0].OriginalID)
+
+	// Non-collapsed by-id read still finds the cache row (the /vuln detail path).
+	recs, total, err = s.QueryVulns(ctx, collect.VulnQuery{ID: "CVE-2021-9", Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "CVE-2021-9", recs[0].OriginalID)
+}
+
 func TestQueryVulnsSourceFilterAndOrder(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
@@ -468,10 +608,11 @@ func TestQueryVulnsSourceFilterAndOrder(t *testing.T) {
 	mk := func(source, id string, score float64, publishedDay, modifiedDay int) collect.VulnRecord {
 		return collect.VulnRecord{
 			Source: source, QueryKey: source + ":k", OriginalID: id, CanonicalID: id,
-			Score:     score,
-			Published: base.AddDate(0, 0, publishedDay),
-			Modified:  base.AddDate(0, 0, modifiedDay),
-			FetchedAt: base,
+			AffectedPackage: "pkg:npm/x",
+			Score:           score,
+			Published:       base.AddDate(0, 0, publishedDay),
+			Modified:        base.AddDate(0, 0, modifiedDay),
+			FetchedAt:       base,
 		}
 	}
 	require.NoError(t, s.PutVulns(ctx, "osv", "osv:k", []collect.VulnRecord{

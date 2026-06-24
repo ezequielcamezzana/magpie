@@ -74,33 +74,19 @@ func (w *Worker) tick(ctx context.Context) {
 	}
 
 	for _, spurl := range spurls {
-		// Capture the previous timestamp before Collect overwrites it, so we
-		// can roll it back if the refresh was incomplete (see below).
-		prev, _ := w.store.GetComponent(ctx, spurl)
-
 		res, err := collect.Collect(ctx, spurl, w.forceCfg)
 		if err != nil {
 			w.logger.Warn("updater collect failed", "spurl", spurl, "err", err)
 			continue
 		}
 
-		// vulns = distinct vulnerabilities found (one per canonical ID).
-		if coreSourceFailed(res.Errors) {
-			// A core source (ecosyste.ms / OSV) failed, so the package's own
-			// metadata and vulns may be incomplete. Roll fetched_at back to its
-			// previous value so the package stays "stale" and gets retried next
-			// cycle instead of counting as freshly updated.
-			//
-			// WHY only core sources: NVD/CPER errors are routine — NVD returns
-			// transient 503s and rate-limits under the updater's load. Blocking
-			// on those would loop the updater on the same few packages forever
-			// and never drain the stale set. So we keep whatever data we got and
-			// only retry when the essential fetch failed.
-			w.revertTimestamp(ctx, prev, res.Component)
-			w.logger.Warn("updater refresh incomplete, will retry",
-				"spurl", spurl, "vulns", len(res.Groups), "errors", sourceErrors(res.Errors))
-			continue
-		}
+		// Always advance fetched_at so the package drains from the stale set,
+		// whatever the sources returned. A source that only served cached data
+		// doesn't re-store the component, so we stamp it here — otherwise the
+		// package would be re-picked every tick (the dotenv-sync loop). Source
+		// errors are logged, not retried: retrying immediately just hammers a
+		// source that's already failing.
+		w.stampFresh(ctx, spurl, res.Component)
 		if len(res.Errors) > 0 {
 			w.logger.Warn("updater refreshed with source errors",
 				"spurl", spurl, "vulns", len(res.Groups), "errors", sourceErrors(res.Errors))
@@ -110,29 +96,24 @@ func (w *Worker) tick(ctx context.Context) {
 	}
 }
 
-// revertTimestamp re-stores the component keeping the freshest data available
-// but with its previous fetched_at, so the package remains eligible for the
-// updater's next pass.
-func (w *Worker) revertTimestamp(ctx context.Context, prev collect.StoreResult[collect.Component], fresh *collect.Component) {
-	if !prev.Found {
-		return
-	}
-	c := prev.Value
+// stampFresh re-stores the component with fetched_at = now so a processed package
+// drains from the stale set. It keeps the freshest metadata available (the
+// collect result, else the stored component) so a served-cached refresh doesn't
+// wipe the existing row.
+func (w *Worker) stampFresh(ctx context.Context, spurl string, fresh *collect.Component) {
+	c := collect.Component{SPURL: spurl}
 	if fresh != nil {
 		c = *fresh
+	} else if r, _ := w.store.GetComponent(ctx, spurl); r.Found {
+		c = r.Value
 	}
-	c.FetchedAt = prev.FetchedAt
+	// WARNING: stamp the row we actually picked, not fresh.SPURL. Collect
+	// normalizes the coord via purl.Strip (case-folded for cargo/npm/…), so a
+	// legacy non-normalized key like pkg:cargo/Deno is refreshed under
+	// pkg:cargo/deno — leaving the picked row stale and re-picked every tick.
+	c.SPURL = spurl
+	c.FetchedAt = time.Now().UTC()
 	_ = w.store.PutComponent(ctx, c)
-}
-
-// coreSourceFailed reports whether a primary source (ecosyste.ms or OSV) errored.
-func coreSourceFailed(errs []collect.SourceError) bool {
-	for _, e := range errs {
-		if e.Source == collect.SourceEcosystems || e.Source == collect.SourceOSV {
-			return true
-		}
-	}
-	return false
 }
 
 // sourceErrors flattens per-source errors into "source: message" strings so

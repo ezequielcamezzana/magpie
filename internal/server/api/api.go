@@ -40,6 +40,7 @@ func Mount(r chi.Router, deps Deps) {
 	})
 
 	r.Get("/collect", handleCollect(deps))
+	r.Get("/bundle", handleBundle(deps))
 	r.Get("/vulnerabilities", handleVulnerabilities(deps))
 	r.Get("/vulnerability", handleVulnerability(deps))
 	r.Get("/components", handleComponents(deps))

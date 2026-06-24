@@ -46,7 +46,9 @@ type vulncheckEnvelope struct {
 }
 
 // FetchCVE fetches one CVE by id and parses it into VulnRecords — one per
-// application CPE the CVE declares.
+// application CPE the CVE declares. An empty result (HTTP 200, the CVE isn't in
+// VulnCheck's NVD2 index — common for recent CVEs) returns no records and no
+// error: it means "no NVD2 data for this CVE", not a fetch failure.
 func (c *Client) FetchCVE(ctx context.Context, cveID string) ([]collect.VulnRecord, error) {
 	q := url.Values{}
 	q.Set("cve", cveID)
@@ -56,13 +58,14 @@ func (c *Client) FetchCVE(ctx context.Context, cveID string) ([]collect.VulnReco
 		return nil, err
 	}
 	if len(env.Data) == 0 {
-		return nil, fmt.Errorf("vulncheck: %s not found", cveID)
+		return nil, nil
 	}
 	return nvd.ParseCVE(env.Data[0])
 }
 
 func (c *Client) fetch(ctx context.Context, rawURL string, out any) error {
 	const maxRetries = 3
+	lastStatus := 0 // remembers the retried status (429/5xx) for the final error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			if err := sleepCtx(ctx, delay); err != nil {
@@ -81,10 +84,11 @@ func (c *Client) fetch(ctx context.Context, rawURL string, out any) error {
 
 		resp, err := c.httpc.Do(req)
 		if err != nil {
-			return err
+			return &collect.HTTPError{Err: err}
 		}
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		lastStatus = resp.StatusCode
 
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests:
@@ -104,14 +108,14 @@ func (c *Client) fetch(ctx context.Context, rawURL string, out any) error {
 			}
 			continue
 		case resp.StatusCode != http.StatusOK:
-			return fmt.Errorf("vulncheck: unexpected status %d", resp.StatusCode)
+			return &collect.HTTPError{Status: resp.StatusCode}
 		}
 		if readErr != nil {
-			return fmt.Errorf("vulncheck: read body: %w", readErr)
+			return &collect.HTTPError{Err: fmt.Errorf("vulncheck: read body: %w", readErr)}
 		}
 		return json.Unmarshal(body, out)
 	}
-	return fmt.Errorf("vulncheck: max retries exceeded")
+	return &collect.HTTPError{Status: lastStatus}
 }
 
 // sleepCtx waits for d or until ctx is cancelled, returning ctx.Err() if the
