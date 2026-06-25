@@ -9,6 +9,7 @@ package cper
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"sort"
 	"strings"
@@ -63,13 +64,23 @@ func Run(ctx context.Context, fetcher collect.CVEFetcher, cfg collect.Config, id
 	if id.Kind == purl.KindLinux {
 		return nil
 	}
-	if cached, _ := cfg.Store.GetCPEs(ctx, spurl); cached.Found && collect.IsFresh(cached.FetchedAt, cfg.MaxAge.CPEs, now) {
+	// A cache-read error is not a miss: refetching from NVD/VulnCheck over a
+	// transient store error is what made cached lookups slow. Report and skip.
+	cached, err := cfg.Store.GetCPEs(ctx, spurl)
+	if err != nil {
+		return []collect.SourceError{{Source: collect.SourceVulnCheck, Kind: "other", Err: fmt.Errorf("read cpe cache: %w", err)}}
+	}
+	if cached.Found && collect.IsFresh(cached.FetchedAt, cfg.MaxAge.CPEs, now) {
 		return nil // fresh CPEs: don't touch NVD
 	}
 	// WHY: a recent search that found no CPE is cached too (negative cache), so
 	// CPE-less packages don't re-hit NVD on every request. Expires with MaxAge,
 	// then we retry in case NVD analyzed the package's CVEs since.
-	if missed, _ := cfg.Store.GetMissedCPE(ctx, spurl); missed.Found && collect.IsFresh(missed.FetchedAt, cfg.MaxAge.MissedCPE, now) {
+	missed, err := cfg.Store.GetMissedCPE(ctx, spurl)
+	if err != nil {
+		return []collect.SourceError{{Source: collect.SourceVulnCheck, Kind: "other", Err: fmt.Errorf("read missed-cpe cache: %w", err)}}
+	}
+	if missed.Found && collect.IsFresh(missed.FetchedAt, cfg.MaxAge.MissedCPE, now) {
 		return nil
 	}
 
@@ -199,7 +210,11 @@ func fetchCVERecords(ctx context.Context, fetcher collect.CVEFetcher, st collect
 // usable for CPE resolution) and records the error so Run can surface it.
 func fetchOneCVE(ctx context.Context, fetcher collect.CVEFetcher, st collect.Store, cve string, maxAge time.Duration, now time.Time) fetchedCVE {
 	key := collect.NVDCVEKey(cve)
-	cached, _ := st.GetVulns(ctx, collect.SourceNVD, key)
+	cached, err := st.GetVulns(ctx, collect.SourceNVD, key)
+	if err != nil {
+		// A cache-read error is not a miss — don't refetch this CVE from NVD over it.
+		return fetchedCVE{cve: cve, failed: true, err: fmt.Errorf("read cve cache: %w", err)}
+	}
 	if cached.Found && collect.IsFresh(cached.FetchedAt, maxAge, now) {
 		return fetchedCVE{cve: cve, recs: cached.Value}
 	}

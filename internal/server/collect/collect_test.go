@@ -54,6 +54,8 @@ type fakeStore struct {
 	vulns  map[string]StoreResult[[]VulnRecord]
 	cpes   map[string]StoreResult[[]ResolvedCPE]
 	missed map[string]time.Time
+
+	getComponentErr error // when set, GetComponent returns it (simulates a DB read error)
 }
 
 func newFakeStore() *fakeStore {
@@ -67,6 +69,9 @@ func newFakeStore() *fakeStore {
 }
 
 func (s *fakeStore) GetComponent(ctx context.Context, spurl string) (StoreResult[Component], error) {
+	if s.getComponentErr != nil {
+		return StoreResult[Component]{}, s.getComponentErr
+	}
 	return s.comps[spurl], nil
 }
 func (s *fakeStore) PutComponent(ctx context.Context, c Component) error {
@@ -297,6 +302,21 @@ func TestCollectStage1FetchErrorNotFatal(t *testing.T) {
 	_, errs := collectStage1(context.Background(), f, st, spurl, 24*time.Hour, now, 0)
 	require.Len(t, errs, 1)
 	assert.Equal(t, SourceEcosystems, errs[0].Source)
+}
+
+// A cache-read error must not be mistaken for a miss: the stage reports it and
+// skips the live fetch instead of hammering upstream (the slow-cache bug).
+func TestCollectStage1CacheReadErrorSkipsFetch(t *testing.T) {
+	st := newFakeStore()
+	st.getComponentErr = errors.New("database is locked")
+
+	f := &stubFetcher{comp: Component{SPURL: "pkg:npm/axios", Name: "axios"}}
+	res, errs := collectStage1(context.Background(), f, st, "pkg:npm/axios", 24*time.Hour, time.Now().UTC(), 0)
+
+	assert.Zero(t, f.calls, "must not refetch upstream on a cache-read error")
+	require.Len(t, errs, 1)
+	assert.Equal(t, SourceEcosystems, errs[0].Source)
+	assert.Nil(t, res.Component)
 }
 
 func TestCollectStage2Matching(t *testing.T) {

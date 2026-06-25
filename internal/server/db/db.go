@@ -31,7 +31,7 @@ type Store struct {
 // Open opens the DB at dsn and runs the schema. E.g. Open("magpie.db") or
 // Open(":memory:") for an ephemeral DB in tests.
 func Open(dsn string) (*Store, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", dataSource(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -999,4 +999,22 @@ func parseTime(s string) time.Time {
 
 func isMemory(dsn string) bool {
 	return dsn == ":memory:" || strings.Contains(dsn, ":memory:") || strings.Contains(dsn, "mode=memory")
+}
+
+// dataSource adds WAL + a busy timeout to a file DSN. WHY: in the default
+// rollback-journal mode with busy_timeout=0, the background updater's writes
+// make a concurrent request's cache reads fail with SQLITE_BUSY — and the
+// pipeline treats a read error as a cache miss, so it refetches from upstream
+// (slow) even though the data is cached. WAL lets readers run alongside the
+// writer; busy_timeout makes a contended write wait instead of erroring.
+// In-memory DBs keep the bare DSN: one shared connection, no on-disk journal.
+func dataSource(dsn string) string {
+	if isMemory(dsn) {
+		return dsn
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 }

@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -234,7 +235,11 @@ func runOSV(ctx context.Context, fetcher OSVFetcher, st Store, q purl.OSVQuery, 
 		return nil
 	}
 
-	cached, _ := st.GetVulns(ctx, SourceOSV, osvKey)
+	cached, err := st.GetVulns(ctx, SourceOSV, osvKey)
+	if err != nil {
+		// A cache-read error is not a miss — don't refetch OSV over it.
+		return []SourceError{{Source: SourceOSV, Kind: "other", Err: fmt.Errorf("read osv cache: %w", err)}}
+	}
 	if cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
 		return nil
 	}
@@ -309,7 +314,12 @@ func runNVDByCPE(ctx context.Context, cfg Config, cpes []ResolvedCPE, spurl stri
 	var errs []SourceError
 	for _, c := range cpes {
 		key := NVDCPEKey(c.CPE)
-		cached, _ := cfg.Store.GetVulns(ctx, SourceNVD, key)
+		cached, err := cfg.Store.GetVulns(ctx, SourceNVD, key)
+		if err != nil {
+			// A cache-read error is not a miss — don't refetch NVD over it.
+			errs = append(errs, SourceError{Source: SourceNVD, Kind: "other", Err: fmt.Errorf("read nvd cache: %w", err)})
+			continue
+		}
 		if cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
 			continue // fresh: don't touch NVD
 		}
@@ -395,7 +405,13 @@ func matchGroups(groups []CanonicalGroup, identity purl.Identity, version string
 func collectStage1(ctx context.Context, fetcher EcosystemsFetcher, st Store, spurl string, maxAge time.Duration, now time.Time, budget time.Duration) (*Result, []SourceError) {
 	var errs []SourceError
 
-	cached, _ := st.GetComponent(ctx, spurl)
+	cached, err := st.GetComponent(ctx, spurl)
+	if err != nil {
+		// A cache-read error is not a miss: refetching upstream over a transient
+		// store error is what made cached lookups slow. Report it and skip.
+		errs = append(errs, SourceError{Source: SourceEcosystems, Kind: "other", Err: fmt.Errorf("read component cache: %w", err)})
+		return &Result{}, errs
+	}
 	if cached.Found && IsFresh(cached.FetchedAt, maxAge, now) {
 		return cachedComponentResult(ctx, st, cached.Value), errs
 	}

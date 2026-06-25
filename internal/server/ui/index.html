@@ -1463,6 +1463,114 @@
                                                         x-text="'→ fixed in ' + m.Verdict.NextFix"
                                                     ></span>
                                                 </div>
+                                                <!-- Affected ranges/fixed/versions for this advisory, collapsed by default. -->
+                                                <div
+                                                    class="vc-vers collapse"
+                                                    x-data="{ open: false, showAllVers: false }"
+                                                    :class="{ open }"
+                                                    x-show="(m.Record.AffectedRanges||[]).length || (m.Record.FixedVersions||[]).length || (m.Record.AffectedVersions||[]).length"
+                                                >
+                                                    <div
+                                                        class="vc-vers-head collapse-header"
+                                                        @click="open=!open"
+                                                    >
+                                                        <span
+                                                            class="collapse-chevron"
+                                                            >▶</span
+                                                        >
+                                                        <span
+                                                            class="vc-vers-label"
+                                                            >affects to</span
+                                                        >
+                                                    </div>
+                                                    <div class="collapse-body">
+                                                        <dl class="evc-kv">
+                                                            <div
+                                                                class="evc-kv-row"
+                                                            >
+                                                                <dt>
+                                                                    Affected
+                                                                    ranges
+                                                                </dt>
+                                                                <dd>
+                                                                    <span
+                                                                        class="evc-chips"
+                                                                    >
+                                                                        <template
+                                                                            x-for="(r, ri) in (m.Record.AffectedRanges||[])"
+                                                                            :key="ri"
+                                                                            ><span
+                                                                                class="evc-range"
+                                                                                x-text="r"
+                                                                            ></span
+                                                                        ></template>
+                                                                        <span
+                                                                            class="evc-empty"
+                                                                            x-show="!(m.Record.AffectedRanges||[]).length"
+                                                                            >—</span
+                                                                        >
+                                                                    </span>
+                                                                </dd>
+                                                            </div>
+                                                            <div
+                                                                class="evc-kv-row"
+                                                            >
+                                                                <dt>Fixed</dt>
+                                                                <dd>
+                                                                    <span
+                                                                        class="evc-chips"
+                                                                    >
+                                                                        <template
+                                                                            x-for="(v, vi) in (m.Record.FixedVersions||[])"
+                                                                            :key="vi"
+                                                                            ><span
+                                                                                class="evc-ver"
+                                                                                x-text="v"
+                                                                            ></span
+                                                                        ></template>
+                                                                        <span
+                                                                            class="evc-empty"
+                                                                            x-show="!(m.Record.FixedVersions||[]).length"
+                                                                            >—</span
+                                                                        >
+                                                                    </span>
+                                                                </dd>
+                                                            </div>
+                                                            <div
+                                                                class="evc-kv-row"
+                                                            >
+                                                                <dt>
+                                                                    Affected
+                                                                </dt>
+                                                                <dd>
+                                                                    <span
+                                                                        class="evc-chips"
+                                                                    >
+                                                                        <template
+                                                                            x-for="(v, vi) in (showAllVers ? (m.Record.AffectedVersions||[]) : (m.Record.AffectedVersions||[]).slice(0,12))"
+                                                                            :key="vi"
+                                                                            ><span
+                                                                                class="evc-ver"
+                                                                                x-text="v"
+                                                                            ></span
+                                                                        ></template>
+                                                                        <button
+                                                                            class="evc-more"
+                                                                            x-show="!showAllVers && (m.Record.AffectedVersions||[]).length>12"
+                                                                            @click="showAllVers=true"
+                                                                            x-text="'+' + ((m.Record.AffectedVersions||[]).length-12) + ' more'"
+                                                                        ></button>
+                                                                        <span
+                                                                            class="evc-empty"
+                                                                            x-show="!(m.Record.AffectedVersions||[]).length"
+                                                                            >—</span
+                                                                        >
+                                                                    </span>
+                                                                </dd>
+                                                            </div>
+                                                        </dl>
+                                                    </div>
+                                                </div>
                                             </div>
 
                                             <div class="vc-child-side">
