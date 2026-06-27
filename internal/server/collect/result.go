@@ -61,8 +61,11 @@ type VulnRecord struct {
 	UnaffectedVersions []string
 	Published          time.Time
 	Modified           time.Time
-	Payload            json.RawMessage
-	FetchedAt          time.Time
+	// WHY: the raw upstream advisory, kept only for DB persistence — it
+	// duplicates the structured fields above and bloats every API response
+	// (it's the bulk of a record's bytes). Never serialized to clients.
+	Payload   json.RawMessage `json:"-"`
+	FetchedAt time.Time
 }
 
 type CanonicalGroup struct {

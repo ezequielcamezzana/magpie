@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS package_vuln (
 	affected_package    TEXT,
 	matched_on          TEXT NOT NULL DEFAULT '',
 	original_id         TEXT NOT NULL,
+	-- Denormalizado desde vulns para que el listado colapsado agrupe/ordene sin
+	-- joinear vulns en el scan: canonical_id es el group key, score/severity/dates
+	-- los ejes de orden. vulns sigue siendo la fuente de verdad del texto
+	-- (summary, aliases); estas columnas se re-stampean en cada PutVulns.
+	canonical_id        TEXT,
+	score               REAL,
+	severity            TEXT,
+	published_at        TEXT,
+	modified_at         TEXT,
 	affected_versions   TEXT,
 	affected_ranges     TEXT,
 	fixed_versions      TEXT,
@@ -68,6 +77,10 @@ CREATE TABLE IF NOT EXISTS package_vuln (
 -- (source, original_id) — the vulns join and the /vuln by-id read — aren't
 -- covered. SQLite doesn't auto-index FK child columns; index it explicitly.
 CREATE INDEX IF NOT EXISTS idx_package_vuln_source_oid ON package_vuln(source, original_id);
+
+-- NOTE: idx_pv_canon (expression index on the collapsed group key) is created in
+-- the migration loop in Open, after the denormalized columns are ALTERed in —
+-- it references canonical_id, which old DBs gain only via that ALTER.
 
 -- cpes: un CPE resuelto por fila (no un blob JSON). Columnas escalares para que
 -- el usuario pueda buscar por vendor/product/cpe además del spurl asociado; las

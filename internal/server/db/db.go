@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	_ "embed"
@@ -25,7 +26,57 @@ var schemaSQL string
 var _ collect.Store = (*Store)(nil)
 
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	vulnCount *ttlCache
+}
+
+// vulnCountTTL bounds how stale a cached collapsed-vuln total may be. The count
+// only moves when the updater ingests (minutes apart), so a few seconds of
+// staleness is invisible while saving a ~500ms GROUP BY scan per list request.
+const vulnCountTTL = 30 * time.Second
+
+// ttlCache memoizes integer counts behind a string key with a fixed TTL. Used
+// for the collapsed-vuln COUNT(*), which re-runs the whole GROUP BY scan on
+// every list request even though the total barely changes.
+type ttlCache struct {
+	mu  sync.Mutex
+	ttl time.Duration
+	m   map[string]countEntry
+}
+
+type countEntry struct {
+	total int
+	at    time.Time
+}
+
+func newTTLCache(ttl time.Duration) *ttlCache {
+	return &ttlCache{ttl: ttl, m: map[string]countEntry{}}
+}
+
+// get returns the cached total for key if it is still within the TTL.
+func (c *ttlCache) get(key string) (int, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[key]
+	if !ok || time.Since(e.at) > c.ttl {
+		return 0, false
+	}
+	return e.total, true
+}
+
+// put stores a total and, when the map grows past a small cap, drops expired
+// entries so per-search-term keys can't leak unbounded.
+func (c *ttlCache) put(key string, total int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.m) > 256 {
+		for k, e := range c.m {
+			if time.Since(e.at) > c.ttl {
+				delete(c.m, k)
+			}
+		}
+	}
+	c.m[key] = countEntry{total: total, at: time.Now()}
 }
 
 // Open opens the DB at dsn and runs the schema. E.g. Open("magpie.db") or
@@ -56,9 +107,20 @@ func Open(dsn string) (*Store, error) {
 		`ALTER TABLE cpes ADD COLUMN osv_ranges TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE vulns ADD COLUMN summary TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE package_vuln ADD COLUMN matched_on TEXT NOT NULL DEFAULT ''`,
+		// Denormalized rollup columns: nullable, no default, so old rows survive
+		// the ALTER (a default would otherwise have to backfill every row).
+		`ALTER TABLE package_vuln ADD COLUMN canonical_id TEXT`,
+		`ALTER TABLE package_vuln ADD COLUMN score REAL`,
+		`ALTER TABLE package_vuln ADD COLUMN severity TEXT`,
+		`ALTER TABLE package_vuln ADD COLUMN published_at TEXT`,
+		`ALTER TABLE package_vuln ADD COLUMN modified_at TEXT`,
 		// Indexes for the vulns join / by-id read (idempotent on existing DBs).
 		`CREATE INDEX IF NOT EXISTS idx_package_vuln_source_oid ON package_vuln(source, original_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_vulns_original ON vulns(original_id)`,
+		// Expression index on the collapsed list's group key so GROUP BY scans the
+		// index instead of building a temp B-tree. Must follow the ALTERs above:
+		// on old DBs canonical_id only exists once they have run.
+		`CREATE INDEX IF NOT EXISTS idx_pv_canon ON package_vuln(COALESCE(NULLIF(canonical_id, ''), original_id))`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
@@ -71,7 +133,29 @@ func Open(dsn string) (*Store, error) {
 		return nil, fmt.Errorf("fold legacy keys: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	if err := backfillPackageVuln(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("backfill package_vuln: %w", err)
+	}
+
+	return &Store{db: db, vulnCount: newTTLCache(vulnCountTTL)}, nil
+}
+
+// backfillPackageVuln copies the denormalized rollup columns from vulns into rows
+// that predate them. PutVulns always writes these columns (empty string / 0, never
+// NULL), so a NULL canonical_id marks a pre-migration row — making this a one-time,
+// idempotent fill.
+func backfillPackageVuln(db *sql.DB) error {
+	_, err := db.Exec(`
+		UPDATE package_vuln
+		SET (canonical_id, score, severity, published_at, modified_at) =
+			(SELECT v.canonical_id, v.score, v.severity, v.published_at, v.modified_at
+			   FROM vulns v
+			  WHERE v.source = package_vuln.source AND v.original_id = package_vuln.original_id)
+		WHERE canonical_id IS NULL
+		  AND EXISTS (SELECT 1 FROM vulns v
+		              WHERE v.source = package_vuln.source AND v.original_id = package_vuln.original_id)`)
+	return err
 }
 
 // foldLegacyKeys rewrites pre-fold storage keys to their normalized form.
@@ -264,10 +348,11 @@ func (s *Store) Metrics(ctx context.Context, staleBefore time.Time) (collect.Met
 	}{
 		{&m.Components, `SELECT COUNT(*) FROM components`, nil},
 		// Distinct logical vulnerabilities affecting a package, matching the
-		// /vulnerabilities list exactly: QueryVulns' collapse groups by the
-		// canonical CVE (else original_id) and filters out the unattached per-CVE
-		// cache (empty affected_package).
-		{&m.Vulns, `SELECT COUNT(*) FROM (SELECT 1` + vulnJoin + ` WHERE pv.affected_package <> '' GROUP BY COALESCE(NULLIF(v.canonical_id, ''), pv.original_id))`, nil},
+		// /vulnerabilities list exactly: groups by the canonical CVE (else
+		// original_id) and filters out the unattached per-CVE cache (empty
+		// affected_package). Single-table over the denormalized pv.canonical_id
+		// (idx_pv_canon) — same group key as queryVulnsCollapsed, no vulns join.
+		{&m.Vulns, `SELECT COUNT(*) FROM (SELECT 1 FROM package_vuln pv WHERE pv.affected_package <> '' GROUP BY ` + pvAdvisoryKey + `)`, nil},
 		{&m.CPEs, `SELECT COUNT(*) FROM cpes`, nil},
 		{&m.ComponentsWithCPE, `SELECT COUNT(DISTINCT spurl) FROM cpes`, nil},
 		{&m.MissedCPEs, `SELECT COUNT(*) FROM missed_cpes`, nil},
@@ -792,12 +877,16 @@ func (s *Store) PutVulns(ctx context.Context, source, queryKey string, vs []coll
 		// WARNING: plain INSERT (no OR REPLACE): a duplicate original_id within
 		// the same set violates package_vuln's PK and aborts the tx, it does
 		// not overwrite.
+		// canonical_id/score/severity/dates are denormalized from the header so the
+		// collapsed list groups and orders without joining vulns on the scan.
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO package_vuln (source, query_key, affected_package, matched_on, original_id,
+			                           canonical_id, score, severity, published_at, modified_at,
 			                           affected_versions, affected_ranges, fixed_versions,
 			                           unaffected_versions, fetched_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			source, queryKey, v.AffectedPackage, matchedOn, v.OriginalID,
+			v.CanonicalID, v.Score, v.Severity, formatTime(v.Published), formatTime(v.Modified),
 			affected, ranges, fixed, unaffected, formatTime(v.FetchedAt)); err != nil {
 			return fmt.Errorf("insert package_vuln %q: %w", v.OriginalID, err)
 		}
@@ -810,6 +899,19 @@ func (s *Store) PutVulns(ctx context.Context, source, queryKey string, vs []coll
 }
 
 func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.VulnRecord, int, error) {
+	if q.Collapse {
+		return s.queryVulnsCollapsed(ctx, q)
+	}
+	return s.queryVulnsByID(ctx, q)
+}
+
+// queryVulnsByID is the non-collapsed (detail / by-id) read. The same (source,
+// original_id, matched_on) can live under several query_keys (the per-CVE and
+// per-CPE NVD caches plus the package read key), so it groups by that triple — a
+// by-id lookup must show each logical vuln-impact once. matched_on (the purl or
+// CPE) is the stable identifier; affected_package can vary. It joins vulns for the
+// header, which is cheap on the small by-id result.
+func (s *Store) queryVulnsByID(ctx context.Context, q collect.VulnQuery) ([]collect.VulnRecord, int, error) {
 	var conds []string
 	var args []any
 	if q.ID != "" {
@@ -826,73 +928,34 @@ func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.
 		conds = append(conds, "pv.source = ?")
 		args = append(args, q.Source)
 	}
-	if q.Collapse {
-		// WHY: the collapsed list shows vulns affecting known packages. CPER's
-		// raw per-CVE cache (query_key cve:…) lands in package_vuln with an empty
-		// affected_package — package-independent records that only bloat the
-		// scan/group. Real impacts (ecosyste.ms/OSV, NVD by-CPE) all stamp it, so
-		// excluding the empty ones shrinks the working set without losing data.
-		conds = append(conds, "pv.affected_package <> ''")
-	}
 	where := ""
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 
-	// WHY: the same (source, original_id, matched_on) can live under several
-	// query_keys (the per-CVE and per-CPE NVD caches plus the package read
-	// key), so the detail path collapses by that triple — a by-id lookup must
-	// show each logical vuln-impact once. matched_on (the purl or CPE) is the
-	// stable identifier; affected_package can vary (empty in the raw per-CVE
-	// cache, the spurl in the package read). GROUP BY picks one row per group.
-	//
-	// The list (Collapse) groups by the logical vuln — its canonical CVE, else
-	// its original_id — so each CVE shows once (its CVE/GHSA/PYSEC variants
-	// collapse into one row titled by the canonical). With MAX(v.score), SQLite
-	// pulls the other bare columns (score, dates, …) from the highest-severity
-	// instance — the representative row.
-	const advisoryKey = `COALESCE(NULLIF(v.canonical_id, ''), pv.original_id)`
-	cols := vulnCols
-	vulnGroupBy := ` GROUP BY pv.source, pv.original_id, pv.matched_on`
-	if q.Collapse {
-		vulnGroupBy = ` GROUP BY ` + advisoryKey
-		cols = strings.Replace(cols, "v.score,", "MAX(v.score),", 1)
+	// WHY: the list/detail API never serializes payload (json:"-"), but it's the
+	// bulk of a row's bytes — reading it for every (grouped) row dominates this
+	// query's cost. Select an empty literal so SQLite never touches the payload
+	// column; the column count stays aligned with scanVuln, which leaves Payload
+	// nil on an empty string.
+	cols := strings.Replace(vulnCols, "v.payload", "''", 1)
+	const vulnGroupBy = ` GROUP BY pv.source, pv.original_id, pv.matched_on`
+
+	countSQL := `SELECT COUNT(*) FROM (SELECT 1` + vulnJoin + where + vulnGroupBy + `)`
+	countKey := countSQL + fmt.Sprint(args)
+	total, cached := s.vulnCount.get(countKey)
+	if !cached {
+		if err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count vulns: %w", err)
+		}
+		s.vulnCount.put(countKey, total)
 	}
 
-	var total int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM (SELECT 1`+vulnJoin+where+vulnGroupBy+`)`, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count vulns: %w", err)
-	}
-
-	// NOTE: defensive minimum clamp; the real defaults/maximums (e.g. 100) are
-	// applied by the handler.
-	page := q.Page
-	if page <= 0 {
-		page = 1
-	}
-	limit := q.Limit
-	if limit <= 0 {
-		limit = 25
-	}
+	page, limit := clampPage(q.Page, q.Limit)
 	offset := (page - 1) * limit
 
-	// Deterministic order so pagination is stable. NULL scores/dates sort last
-	// under DESC (SQLite ranks NULL lowest). Collapse mode orders by aggregates
-	// (the group spans packages) and tiebreaks on the advisory key; the
-	// non-collapsed path (detail) keeps its raw per-row order.
-	orderBy := " ORDER BY pv.fetched_at DESC, pv.source, pv.query_key, pv.original_id"
-	if q.Collapse {
-		orderBy = " ORDER BY MAX(pv.fetched_at) DESC, " + advisoryKey
-		switch q.Order {
-		case "cvss":
-			orderBy = " ORDER BY MAX(v.score) DESC, " + advisoryKey
-		case "updated":
-			orderBy = " ORDER BY MAX(v.modified_at) DESC, " + advisoryKey
-		case "created":
-			orderBy = " ORDER BY MAX(v.published_at) DESC, " + advisoryKey
-		}
-	}
+	// Deterministic order so pagination is stable.
+	const orderBy = " ORDER BY pv.fetched_at DESC, pv.source, pv.query_key, pv.original_id"
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+cols+vulnJoin+where+vulnGroupBy+orderBy+` LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
@@ -901,6 +964,120 @@ func (s *Store) QueryVulns(ctx context.Context, q collect.VulnQuery) ([]collect.
 	}
 	defer rows.Close()
 
+	return scanVulnRows(rows, total)
+}
+
+// pvAdvisoryKey is the collapsed list's group key, computed entirely from
+// package_vuln (the canonical CVE, else the original_id) — no vulns join on the
+// scan. Indexed by idx_pv_canon so the GROUP BY skips the temp B-tree.
+const pvAdvisoryKey = `COALESCE(NULLIF(pv.canonical_id, ''), pv.original_id)`
+
+// pvRepCols projects the representative package_vuln row per group. MAX(pv.score)
+// is the result-set aggregate, so SQLite pulls the other bare columns from a
+// member of the group — the representative is the highest-score instance. summary
+// and aliases come from vulns in the outer join, not from here.
+const pvRepCols = `pv.source, pv.query_key, pv.affected_package, pv.matched_on, pv.original_id,
+	pv.canonical_id, MAX(pv.score) AS score, pv.severity,
+	pv.affected_versions, pv.affected_ranges, pv.fixed_versions, pv.unaffected_versions,
+	pv.published_at, pv.modified_at, pv.fetched_at`
+
+// collapseCols projects the 18 columns scanVuln expects from the page's
+// representative rows (g) joined to vulns (v) for the header text. Payload is the
+// empty literal — the list never serializes it. Order must match scanVuln.
+const collapseCols = `g.source, g.query_key, g.affected_package, g.matched_on, g.original_id,
+	g.canonical_id, v.aliases, v.summary, g.score, g.severity,
+	g.affected_versions, g.affected_ranges, g.fixed_versions, g.unaffected_versions,
+	g.published_at, g.modified_at, '', g.fetched_at`
+
+// queryVulnsCollapsed is the list read: one row per logical vuln (its canonical
+// CVE, else original_id), so every CVE/GHSA/PYSEC variant collapses into a single
+// row titled by the canonical. It groups, orders and paginates entirely from
+// package_vuln — the denormalized rollup columns make the join to vulns
+// unnecessary on the scan — then joins vulns only for the page's ≤limit rows to
+// add the header text (summary, aliases).
+func (s *Store) queryVulnsCollapsed(ctx context.Context, q collect.VulnQuery) ([]collect.VulnRecord, int, error) {
+	var conds []string
+	var args []any
+	if q.ID != "" {
+		if q.Fuzzy {
+			conds = append(conds, "(pv.original_id LIKE ? OR pv.canonical_id LIKE ?)")
+			like := "%" + q.ID + "%"
+			args = append(args, like, like)
+		} else {
+			conds = append(conds, "(pv.original_id = ? OR pv.canonical_id = ?)")
+			args = append(args, q.ID, q.ID)
+		}
+	}
+	if q.Source != "" {
+		conds = append(conds, "pv.source = ?")
+		args = append(args, q.Source)
+	}
+	// WHY: CPER's raw per-CVE cache (query_key cve:…) lands with an empty
+	// affected_package — package-independent records that only bloat the scan.
+	// Real impacts all stamp it, so excluding the empty ones loses no data.
+	conds = append(conds, "pv.affected_package <> ''")
+	where := " WHERE " + strings.Join(conds, " AND ")
+
+	// The count re-runs the group scan; memoize it (single-table now, no join).
+	countSQL := `SELECT COUNT(*) FROM (SELECT 1 FROM package_vuln pv` + where + ` GROUP BY ` + pvAdvisoryKey + `)`
+	countKey := countSQL + fmt.Sprint(args)
+	total, cached := s.vulnCount.get(countKey)
+	if !cached {
+		if err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count vulns: %w", err)
+		}
+		s.vulnCount.put(countKey, total)
+	}
+
+	page, limit := clampPage(q.Page, q.Limit)
+	offset := (page - 1) * limit
+
+	// The order axis is an aggregate over the group; carry it as `ord` so the
+	// outer query re-establishes the page order after the vulns join. NULLs sort
+	// last under DESC (SQLite ranks NULL lowest); tiebreak on the group key for
+	// stable pagination.
+	ord := `MAX(pv.fetched_at)`
+	switch q.Order {
+	case "cvss":
+		ord = `MAX(pv.score)`
+	case "updated":
+		ord = `MAX(pv.modified_at)`
+	case "created":
+		ord = `MAX(pv.published_at)`
+	}
+
+	inner := `SELECT ` + pvRepCols + `, ` + pvAdvisoryKey + ` AS grp, ` + ord + ` AS ord
+		FROM package_vuln pv` + where + `
+		GROUP BY ` + pvAdvisoryKey + `
+		ORDER BY ord DESC, grp LIMIT ? OFFSET ?`
+	sqlText := `SELECT ` + collapseCols + `
+		FROM (` + inner + `) g
+		JOIN vulns v ON v.source = g.source AND v.original_id = g.original_id
+		ORDER BY g.ord DESC, g.grp`
+
+	rows, err := s.db.QueryContext(ctx, sqlText, append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query vulns: %w", err)
+	}
+	defer rows.Close()
+
+	return scanVulnRows(rows, total)
+}
+
+// clampPage applies the defensive minimums; the real defaults/maximums (e.g. 100)
+// are applied by the handler.
+func clampPage(page, limit int) (int, int) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	return page, limit
+}
+
+// scanVulnRows drains a list/detail query into records, carrying the total along.
+func scanVulnRows(rows *sql.Rows, total int) ([]collect.VulnRecord, int, error) {
 	var recs []collect.VulnRecord
 	for rows.Next() {
 		r, _, err := scanVuln(rows)

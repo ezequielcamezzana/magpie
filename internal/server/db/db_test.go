@@ -33,7 +33,7 @@ func TestOpenCreatesTables(t *testing.T) {
 		require.NoError(t, err, "table %q not found", name)
 	}
 
-	for _, idx := range []string{"idx_vulns_canonical", "idx_vulns_original", "idx_package_vuln_source_oid"} {
+	for _, idx := range []string{"idx_vulns_canonical", "idx_vulns_original", "idx_package_vuln_source_oid", "idx_pv_canon"} {
 		var got string
 		err := s.db.QueryRow(
 			`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&got)
@@ -689,6 +689,102 @@ func TestQueryVulnsCollapseAndFuzzy(t *testing.T) {
 	_, total, err = s.QueryVulns(ctx, collect.VulnQuery{ID: "CVE-2026", Page: 1, Limit: 25})
 	require.NoError(t, err)
 	assert.Equal(t, 0, total, "exact 'CVE-2026' matches nothing")
+}
+
+// TestQueryVulnsCollapseSummaryAndOrder: the collapsed list returns one row per
+// canonical with its summary (joined from vulns for the page), the representative
+// is the top-score instance, and every order key lists the right group first.
+func TestQueryVulnsCollapseSummaryAndOrder(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mk := func(source, qk, oid, canonical, pkg, summary string, score float64, day int) collect.VulnRecord {
+		return collect.VulnRecord{
+			Source: source, QueryKey: qk, OriginalID: oid, CanonicalID: canonical,
+			MatchedOn: pkg, AffectedPackage: pkg, Summary: summary, Score: score,
+			Published: base.AddDate(0, 0, day), Modified: base.AddDate(0, 0, day),
+			FetchedAt: base.AddDate(0, 0, day),
+		}
+	}
+	// Group SHARED: two impacts of the same canonical under different sources, so
+	// they carry distinct vulns headers; the eco one has the top score.
+	require.NoError(t, s.PutVulns(ctx, "osv", "npm:a", []collect.VulnRecord{
+		mk("osv", "npm:a", "OSV-A", "CVE-SHARED", "pkg:npm/a", "low summary", 4.0, 1),
+	}), "seed osv")
+	require.NoError(t, s.PutVulns(ctx, "ecosyste.ms", "npm:b", []collect.VulnRecord{
+		mk("ecosyste.ms", "npm:b", "OSV-A", "CVE-SHARED", "pkg:npm/b", "top summary", 9.0, 1),
+	}), "seed eco")
+	// A distinct, lower-scored vuln that is newer on every date axis.
+	require.NoError(t, s.PutVulns(ctx, "nvd", "nvd:k", []collect.VulnRecord{
+		mk("nvd", "nvd:k", "CVE-OTHER", "CVE-OTHER", "pkg:npm/c", "other summary", 6.0, 10),
+	}), "seed nvd")
+
+	// CVSS: SHARED (max 9.0) first; representative is the top-score member, so its
+	// score and joined summary come from the eco instance.
+	recs, total, err := s.QueryVulns(ctx, collect.VulnQuery{Collapse: true, Order: "cvss", Page: 1, Limit: 25})
+	require.NoError(t, err, "cvss")
+	assert.Equal(t, 2, total, "two canonicals")
+	require.Len(t, recs, 2)
+	assert.Equal(t, "CVE-SHARED", recs[0].CanonicalID)
+	assert.Equal(t, 9.0, recs[0].Score, "representative is the top-score instance")
+	assert.Equal(t, "top summary", recs[0].Summary, "summary joined from the representative member")
+	assert.Equal(t, "CVE-OTHER", recs[1].CanonicalID)
+
+	// Date axes: OTHER is newer, so it leads; total stays stable.
+	for _, order := range []string{"created", "updated", ""} {
+		recs, total, err := s.QueryVulns(ctx, collect.VulnQuery{Collapse: true, Order: order, Page: 1, Limit: 25})
+		require.NoError(t, err, "order=%q", order)
+		assert.Equal(t, 2, total, "order=%q", order)
+		require.Len(t, recs, 2, "order=%q", order)
+		assert.Equal(t, "CVE-OTHER", recs[0].CanonicalID, "order=%q", order)
+	}
+}
+
+// TestOpenBackfillsPackageVuln: a DB created before the denormalized columns is
+// migrated and backfilled from vulns on open, and the collapsed list reads them.
+func TestOpenBackfillsPackageVuln(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	old, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = old.Exec(`
+		CREATE TABLE vulns (source TEXT NOT NULL, original_id TEXT NOT NULL,
+			canonical_id TEXT, aliases TEXT, summary TEXT NOT NULL DEFAULT '',
+			score REAL, severity TEXT, published_at TEXT, modified_at TEXT,
+			payload TEXT, fetched_at TEXT NOT NULL, PRIMARY KEY (source, original_id));
+		CREATE TABLE package_vuln (source TEXT NOT NULL, query_key TEXT NOT NULL,
+			affected_package TEXT, matched_on TEXT NOT NULL DEFAULT '',
+			original_id TEXT NOT NULL, affected_versions TEXT, affected_ranges TEXT,
+			fixed_versions TEXT, unaffected_versions TEXT, fetched_at TEXT NOT NULL,
+			PRIMARY KEY (source, query_key, original_id));
+		INSERT INTO vulns (source, original_id, canonical_id, aliases, summary, score, severity, published_at, modified_at, payload, fetched_at)
+			VALUES ('osv', 'OSV-A', 'CVE-OLD', '[]', 'old summary', 8.8, 'HIGH', '2020-01-01T00:00:00Z', '2020-02-01T00:00:00Z', '', '2020-01-01T00:00:00Z');
+		INSERT INTO package_vuln (source, query_key, affected_package, matched_on, original_id, affected_versions, affected_ranges, fixed_versions, unaffected_versions, fetched_at)
+			VALUES ('osv', 'npm:a', 'pkg:npm/a', 'pkg:npm/a', 'OSV-A', '[]', '[]', '[]', '[]', '2020-01-01T00:00:00Z');`)
+	require.NoError(t, err)
+	old.Close()
+
+	s, err := Open(path)
+	require.NoError(t, err, "Open over old schema")
+	t.Cleanup(func() { s.Close() })
+
+	// Backfill copied the header fields into the new columns.
+	var canon, sev string
+	var score float64
+	require.NoError(t, s.db.QueryRow(
+		`SELECT canonical_id, score, severity FROM package_vuln WHERE original_id = 'OSV-A'`).Scan(&canon, &score, &sev))
+	assert.Equal(t, "CVE-OLD", canon)
+	assert.Equal(t, 8.8, score)
+	assert.Equal(t, "HIGH", sev)
+
+	// The collapsed list reads the denormalized columns and still joins summary.
+	recs, total, err := s.QueryVulns(context.Background(), collect.VulnQuery{Collapse: true, Order: "cvss", Page: 1, Limit: 25})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "CVE-OLD", recs[0].CanonicalID)
+	assert.Equal(t, "old summary", recs[0].Summary)
+	assert.Equal(t, 8.8, recs[0].Score)
 }
 
 // TestOpenMigratesOldCPEsTable: a DB created before the

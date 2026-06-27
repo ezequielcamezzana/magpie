@@ -50,11 +50,9 @@
                 return b === "none" ? "unknown" : b;
             }
             // Advisory summary: the persisted Summary column (OSV summary||details,
-            // NVD description, eco description), falling back to the raw payload.
+            // NVD description, eco description).
             function recTitle(r) {
-                if (r.Summary) return r.Summary;
-                const p = r.Payload || {};
-                return p.title || p.summary || "";
+                return r.Summary || "";
             }
             // Group freshness tags: NEW if created in the last 24h, UPDATED if updated in
             // the last 24h (and not already NEW, since a fresh vuln is both).
